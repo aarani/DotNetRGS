@@ -1,0 +1,3 @@
+[submodule "geewallet"]
+	path = geewallet
+	url = https://github.com/aarani/geewallet.git
