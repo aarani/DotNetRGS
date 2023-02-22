@@ -15,12 +15,12 @@ open Npgsql
 
 type MutatedProperties =
     {
-        Flags: bool
-        CltvExpiryDelta: bool
-        HtlcMinimumMSat: bool
-        FeeBaseMSat: bool
-        FeeProportionalMillionths: bool
-        HtlcMaximumMSat: bool
+        mutable Flags: bool
+        mutable CltvExpiryDelta: bool
+        mutable HtlcMinimumMSat: bool
+        mutable FeeBaseMSat: bool
+        mutable FeeProportionalMillionths: bool
+        mutable HtlcMaximumMSat: bool
     }
 
     static member Default =
@@ -47,10 +47,17 @@ type UpdateDelta =
 
 type DirectedUpdateDelta =
     {
-        LastUpdateBeforeSeen: Option<UnsignedChannelUpdateMsg>
-        MutatedProperties: MutatedProperties
-        LastUpdateAfterSeen: Option<UpdateDelta>
+        mutable LastUpdateBeforeSeen: Option<UnsignedChannelUpdateMsg>
+        mutable MutatedProperties: MutatedProperties
+        mutable LastUpdateAfterSeen: Option<UpdateDelta>
     }
+
+    static member Default =
+        {
+            LastUpdateBeforeSeen = None
+            MutatedProperties = MutatedProperties.Default
+            LastUpdateAfterSeen = None
+        }
 
 type ChannelDelta =
     {
@@ -65,6 +72,8 @@ type ChannelDelta =
             Updates = (None, None)
             FirstUpdateSeen = None
         }
+
+type DeltaSet = Map<ShortChannelId, ChannelDelta>
 
 module EasyLightningReader =
     let readStreamToEnd(stream: Stream) =
@@ -95,14 +104,11 @@ type GossipSnapshotter(startToken: CancellationToken) =
         )
 
     let fetchChannelAnnouncements
-        (
-            deltaSet: Map<ShortChannelId, ChannelDelta>,
-            lastSyncTimestamp: DateTime
-        ) =
+        (deltaSet: DeltaSet)
+        (lastSyncTimestamp: DateTime)
+        =
         async {
-            let rec readCurrentAnnouncements
-                (deltaSet: Map<ShortChannelId, ChannelDelta>)
-                =
+            let rec readCurrentAnnouncements(deltaSet: DeltaSet) =
                 async {
                     let readAnns =
                         dataSource.CreateCommand
@@ -215,7 +221,7 @@ type GossipSnapshotter(startToken: CancellationToken) =
                                         )
                                 else
                                     return deltaSet
-                            }   `
+                            }
 
                         return! readRow deltaSet
                     else
@@ -226,6 +232,312 @@ type GossipSnapshotter(startToken: CancellationToken) =
 
             return deltaSet
         }
+
+    let fetchChannelUpdates
+        (deltaSet: DeltaSet)
+        (lastSyncTimeStamp: DateTime)
+        (considerIntermediateUpdates: bool)
+        =
+        async {
+            let mutable last_seen_update_ids = List<int>.Empty
+            let mutable non_intermediate_ids = Set<int>(Seq.empty)
+            // get the latest channel update in each direction prior to last_sync_timestamp, provided
+            // there was an update in either direction that happened after the last sync (to avoid
+            // collecting too many reference updates)
+            let readReference(deltaSet: DeltaSet) =
+                async {
+                    let readCommand =
+                        dataSource.CreateCommand(
+                            "SELECT DISTINCT ON (short_channel_id, direction) id, direction, blob_signed FROM channel_updates WHERE seen < $1 AND short_channel_id IN (SELECT short_channel_id FROM channel_updates WHERE seen >= $1 GROUP BY short_channel_id) ORDER BY short_channel_id ASC, direction ASC, seen DESC"
+                        )
+
+                    readCommand.Parameters.AddWithValue lastSyncTimeStamp
+                    |> ignore<NpgsqlParameter>
+
+                    let! reader =
+                        readCommand.ExecuteReaderAsync() |> Async.AwaitTask
+
+                    if reader.HasRows then
+                        let rec readRow(deltaSet: DeltaSet) =
+                            async {
+                                let! readResult =
+                                    reader.ReadAsync() |> Async.AwaitTask
+
+                                if readResult then
+                                    let updateId = reader.GetInt32 0
+
+                                    last_seen_update_ids <-
+                                        updateId :: last_seen_update_ids
+
+                                    non_intermediate_ids <-
+                                        Set.add updateId non_intermediate_ids
+
+                                    let direction = reader.GetBoolean 1
+
+                                    let! updateMsg =
+                                        reader.GetStream 2
+                                        |> EasyLightningReader.readLightningMsgFromStream<ChannelUpdateMsg>
+
+                                    let scId = updateMsg.Contents.ShortChannelId
+
+                                    let currentChannelDelta =
+                                        deltaSet
+                                        |> Map.tryFind scId
+                                        |> Option.defaultValue
+                                            ChannelDelta.Default
+
+                                    let updates = currentChannelDelta.Updates
+
+                                    let channelDelta =
+                                        if not direction then
+                                            { currentChannelDelta with
+                                                Updates =
+                                                    let update =
+                                                        fst updates
+                                                        |> Option.defaultValue
+                                                            DirectedUpdateDelta.Default
+
+                                                    Some
+                                                        { update with
+                                                            LastUpdateBeforeSeen =
+                                                                Some
+                                                                    updateMsg.Contents
+                                                        },
+                                                    snd updates
+                                            }
+                                        else
+                                            { currentChannelDelta with
+                                                Updates =
+                                                    let update =
+                                                        snd updates
+                                                        |> Option.defaultValue
+                                                            DirectedUpdateDelta.Default
+
+                                                    fst updates,
+                                                    Some
+                                                        { update with
+                                                            LastUpdateBeforeSeen =
+                                                                Some
+                                                                    updateMsg.Contents
+                                                        }
+                                            }
+
+                                    return!
+                                        readRow(
+                                            deltaSet
+                                            |> Map.add scId channelDelta
+                                        )
+                                else
+                                    return deltaSet
+                            }
+
+                        return! readRow deltaSet
+                    else
+                        return deltaSet
+                }
+
+            let! deltaSet = readReference deltaSet
+            // get all the intermediate channel updates
+            // (to calculate the set of mutated fields for snapshotting, where intermediate updates may
+            // have been omitted)
+            let readIntermediates(deltaSet: DeltaSet) =
+                async {
+                    let readCommand =
+                        let prefix =
+                            if not considerIntermediateUpdates then
+                                "DISTINCT ON (short_channel_id, direction)"
+                            else
+                                ""
+
+                        dataSource.CreateCommand(
+                            sprintf
+                                "SELECT %s id, direction, blob_signed, seen FROM channel_updates WHERE seen >= $1 ORDER BY short_channel_id ASC, direction ASC, seen DESC"
+                                prefix
+                        )
+
+                    readCommand.Parameters.AddWithValue lastSyncTimeStamp
+                    |> ignore<NpgsqlParameter>
+
+                    let! reader =
+                        readCommand.ExecuteReaderAsync() |> Async.AwaitTask
+
+                    let mutable previousShortChannelId = UInt64.MaxValue
+                    let mutable previouslySeenDirections = (false, false)
+
+                    if reader.HasRows then
+                        let rec readRow(deltaSet: DeltaSet) =
+                            async {
+                                let! readResult =
+                                    reader.ReadAsync() |> Async.AwaitTask
+
+                                if readResult then
+                                    let updateId = reader.GetInt32 0
+
+                                    if non_intermediate_ids.Contains updateId then
+                                        return! readRow deltaSet
+                                    else
+                                        let direction = reader.GetBoolean 1
+
+                                        let! updateMsg =
+                                            reader.GetStream 2
+                                            |> EasyLightningReader.readLightningMsgFromStream<ChannelUpdateMsg>
+
+                                        let scId =
+                                            updateMsg.Contents.ShortChannelId
+
+                                        let currentSeenTimestamp =
+                                            reader.GetDateTime 3
+
+                                        let currentChannelDelta =
+                                            deltaSet
+                                            |> Map.tryFind scId
+                                            |> Option.defaultValue
+                                                ChannelDelta.Default
+
+                                        let updates =
+                                            currentChannelDelta.Updates
+
+                                        let updateDelta =
+                                            if not direction then
+                                                fst updates
+                                                |> Option.defaultValue
+                                                    DirectedUpdateDelta.Default
+                                            else
+                                                snd updates
+                                                |> Option.defaultValue
+                                                    DirectedUpdateDelta.Default
+
+                                        if
+                                            not direction
+                                            && not(fst previouslySeenDirections)
+                                        then
+                                            previouslySeenDirections <-
+                                                true,
+                                                snd previouslySeenDirections
+
+                                            updateDelta.LastUpdateAfterSeen <-
+                                                Some
+                                                    {
+                                                        Seen =
+                                                            DateTimeUtils.ToUnixTimestamp
+                                                                currentSeenTimestamp
+                                                        Update =
+                                                            updateMsg.Contents
+                                                    }
+
+                                        else
+                                            previouslySeenDirections <-
+                                                fst previouslySeenDirections,
+                                                true
+
+                                            updateDelta.LastUpdateAfterSeen <-
+                                                Some
+                                                    {
+                                                        Seen =
+                                                            DateTimeUtils.ToUnixTimestamp
+                                                                currentSeenTimestamp
+                                                        Update =
+                                                            updateMsg.Contents
+                                                    }
+
+                                        let lastSeenUpdate =
+                                            updateDelta.LastUpdateBeforeSeen
+
+                                        if lastSeenUpdate.IsSome then
+                                            let lastSeenUpdate =
+                                                lastSeenUpdate.Value
+
+                                            if updateMsg.Contents.ChannelFlags
+                                               <> lastSeenUpdate.ChannelFlags then
+                                                updateDelta.MutatedProperties.Flags <-
+                                                    true
+
+                                            if updateMsg.Contents.CLTVExpiryDelta
+                                               <> lastSeenUpdate.CLTVExpiryDelta then
+                                                updateDelta.MutatedProperties.CltvExpiryDelta <-
+                                                    true
+
+                                            if updateMsg.Contents.HTLCMinimumMSat
+                                               <> lastSeenUpdate.HTLCMinimumMSat then
+                                                updateDelta.MutatedProperties.HtlcMinimumMSat <-
+                                                    true
+
+                                            if updateMsg.Contents.FeeBaseMSat
+                                               <> lastSeenUpdate.FeeBaseMSat then
+                                                updateDelta.MutatedProperties.FeeBaseMSat <-
+                                                    true
+
+                                            if updateMsg.Contents.FeeProportionalMillionths
+                                               <> lastSeenUpdate.FeeProportionalMillionths then
+                                                updateDelta.MutatedProperties.FeeProportionalMillionths <-
+                                                    true
+
+                                            if updateMsg.Contents.HTLCMaximumMSat
+                                               <> lastSeenUpdate.HTLCMaximumMSat then
+                                                updateDelta.MutatedProperties.HtlcMaximumMSat <-
+                                                    true
+
+                                        let channelDelta =
+                                            if not direction then
+                                                { currentChannelDelta with
+                                                    Updates =
+                                                        Some updateDelta,
+                                                        snd updates
+                                                }
+                                            else
+                                                { currentChannelDelta with
+                                                    Updates =
+                                                        fst updates,
+                                                        Some updateDelta
+                                                }
+
+                                        return!
+                                            readRow(
+                                                deltaSet
+                                                |> Map.add scId channelDelta
+                                            )
+                                else
+                                    return deltaSet
+                            }
+
+                        return! readRow deltaSet
+                    else
+                        return deltaSet
+                }
+
+            let! deltaSet = readIntermediates deltaSet
+
+            return deltaSet
+        }
+
+    let filterDeltaSet(deltaSet: DeltaSet) =
+        let rec filter
+            (deltaSet: List<ShortChannelId * ChannelDelta>)
+            (state: List<ShortChannelId * ChannelDelta>)
+            : List<ShortChannelId * ChannelDelta> =
+            match deltaSet with
+            | (scId, delta) :: tail ->
+                //FIXME: this doesn't really do anything because we don't have network graph
+                // like original rgs does. pruning is an issue which needs to be solved.
+                if delta.Announcement.IsNone then
+                    filter tail state
+                else
+                    let updateMeetsCriteria
+                        (update: Option<DirectedUpdateDelta>)
+                        =
+                        if update.IsNone then
+                            false
+                        else
+                            update.Value.LastUpdateAfterSeen.IsSome
+
+                    if updateMeetsCriteria(fst delta.Updates) |> not
+                       && updateMeetsCriteria(snd delta.Updates) |> not then
+                        filter tail state
+                    else
+                        filter tail ((scId, delta)::state)
+            | [] -> state
+
+        filter (deltaSet |> Map.toList) List.empty |> Map.ofList
 
     member __.SerializeDelta() =
         async {
@@ -248,20 +560,30 @@ type GossipSnapshotter(startToken: CancellationToken) =
                 else
                     nodeIdsIndices.[serializedNodeId]
 
-            let deltaSet = Map<ShortChannelId, ChannelDelta>(Seq.empty)
-            let! deltaSet = fetchChannelAnnouncements deltaSet
+            let deltaSet = DeltaSet(Seq.empty)
 
+            let! deltaSet =
+                fetchChannelAnnouncements deltaSet (DateTime.Today.AddHours -5.)
+
+            let! deltaSet =
+                fetchChannelUpdates deltaSet (DateTime.Today.AddHours -5.) true
+
+            let deltaSet = filterDeltaSet deltaSet
+
+            Console.WriteLine(deltaSet.Count)
             return ()
         }
 
-    member __.Start() =
+
+
+    member self.Start() =
         async {
             do! startToken.WaitHandle |> Async.AwaitWaitHandle |> Async.Ignore
 
             let rec snapshot() =
                 async {
                     //TODO: create snapshots
-
+                    do! self.SerializeDelta()
 
                     let nextSnapshot = DateTime.UtcNow.Date.AddDays 1.
 

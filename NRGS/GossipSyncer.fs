@@ -14,8 +14,15 @@ open GWallet.Backend.UtxoCoin.Lightning
 open NBitcoin
 
 open ResultUtils.Portability
+open Newtonsoft.Json
+open System.IO
 
 exception RoutingQueryException of string
+
+type SyncState =
+    {
+        LastSyncTimestamp: DateTime
+    }
 
 type internal GossipSyncer
     (
@@ -41,10 +48,14 @@ type internal GossipSyncer
                     ConnectionPurpose.Routing
 
             let firstTimestamp =
-                let toUnixTimestamp datetime =
-                    (datetime - DateTime(1970, 1, 1)).TotalSeconds |> uint32
-
-                toUnixTimestamp(DateTime.Now - TimeSpan.FromDays(14.0))
+                if File.Exists (sprintf "syncState-%s.json" (peer.NodeId.Value.ToHex())) then
+                    let syncState =
+                        File.ReadAllText (sprintf "syncState-%s.json" (peer.NodeId.Value.ToHex()))
+                        |> JsonConvert.DeserializeObject<SyncState>
+                
+                    DateTimeUtils.ToUnixTimestamp(syncState.LastSyncTimestamp.AddHours(-5))
+                else
+                    DateTimeUtils.ToUnixTimestamp(DateTime.Now - TimeSpan.FromDays(14.0))
 
             let gossipTimeStampFilter =
                 {
@@ -160,6 +171,13 @@ type internal GossipSyncer
 
                     if i > 2UL && delta < 50 && previousCounter <> 0 then
                         Console.WriteLine("Initial sync finished")
+
+                        let syncState =
+                            {
+                                LastSyncTimestamp = DateTime.UtcNow
+                            } 
+                            |> JsonConvert.SerializeObject
+                        File.WriteAllText(sprintf "syncState-%s.json" (peer.NodeId.Value.ToHex()), syncState)
 
                         return!
                             toVerifyMsgHandler.SendAsync(FinishedInitialSync)
