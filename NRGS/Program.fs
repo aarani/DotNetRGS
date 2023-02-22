@@ -16,8 +16,8 @@ module Program =
         async {
             let blockOption = DataflowBlockOptions()
 
-            let toVerify = BufferBlock<IRoutingMsg * array<byte>> blockOption
-            let toHandle = BufferBlock<IRoutingMsg * array<byte>> blockOption
+            let toVerify = BufferBlock<Message> blockOption
+            let toHandle = BufferBlock<Message> blockOption
 
             let syncer =
                 GossipSyncer(

@@ -14,8 +14,8 @@ open NBitcoin
 
 type internal GossipVerifier
     (
-        toVerifyMsgHandler: BufferBlock<IRoutingMsg * array<byte>>,
-        verifiedMsgHandler: BufferBlock<IRoutingMsg * array<byte>>
+        toVerifyMsgHandler: BufferBlock<Message>,
+        verifiedMsgHandler: BufferBlock<Message>
     ) =
     member __.Start() =
         async {
@@ -25,12 +25,12 @@ type internal GossipVerifier
             let network = UtxoCoin.Account.GetNetwork Currency.BTC
 
             while true do
-                let! msg, bytes =
+                let! msg =
                     toVerifyMsgHandler.ReceiveAsync cancelToken
                     |> Async.AwaitTask
 
                 match msg with
-                | :? ChannelAnnouncementMsg as channelAnn ->
+                | RoutingMsg(:? ChannelAnnouncementMsg as channelAnn, _bytes) ->
                     //TODO: verify msg signatures
                     let blockHeight =
                         channelAnn.Contents.ShortChannelId.BlockHeight.Value
@@ -79,17 +79,28 @@ type internal GossipVerifier
                     | Some output when
                         output.IsTo(redeem.WitHash :> IDestination)
                         ->
-                        verifiedMsgHandler.Post(msg, bytes) |> ignore
+                        do!
+                            verifiedMsgHandler.SendAsync msg
+                            |> Async.AwaitTask
+                            |> Async.Ignore
                     | Some _ ->
                         Console.WriteLine
                             "Channel announcement key didn't match on-chain script"
                     | None ->
                         Console.WriteLine
                             "Output index out of bounds in transaction"
-                | :? ChannelUpdateMsg as _updateMsg ->
+                | RoutingMsg(:? ChannelUpdateMsg as _updateMsg, _bytes) ->
                     //TODO: verify msg signature
-                    verifiedMsgHandler.Post(msg, bytes) |> ignore
-                | _ -> ()
+                    do!
+                        verifiedMsgHandler.SendAsync msg
+                        |> Async.AwaitTask
+                        |> Async.Ignore
+                | _ ->
+                    // I don't know this, passing it along
+                    do!
+                        verifiedMsgHandler.SendAsync msg
+                        |> Async.AwaitTask
+                        |> Async.Ignore
 
             ()
         }

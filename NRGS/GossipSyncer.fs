@@ -19,7 +19,7 @@ exception RoutingQueryException of string
 type internal GossipSyncer
     (
         peer: NodeIdentifier,
-        toVerifyMsgHandler: BufferBlock<IRoutingMsg * array<byte>>
+        toVerifyMsgHandler: BufferBlock<Message>
     ) =
     member __.Start() =
         async {
@@ -89,7 +89,11 @@ type internal GossipSyncer
                     match response with
                     | Error e -> return failwithf "RecvMsg failed, error = %A" e
                     | Ok(newState, (:? IRoutingMsg as msg), bytes) ->
-                        toVerifyMsgHandler.SendAsync((msg, bytes), cancelToken) |> ignore
+                        toVerifyMsgHandler.SendAsync(
+                            RoutingMsg(msg, bytes),
+                            cancelToken
+                        )
+                        |> ignore
 
                         return!
                             processMessages

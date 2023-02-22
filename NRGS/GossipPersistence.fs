@@ -8,10 +8,7 @@ open DotNetLightning.Utils
 
 open Npgsql
 
-type internal GossipPersistence
-    (
-        verifiedMsgHandler: BufferBlock<IRoutingMsg * array<byte>>
-    ) =
+type internal GossipPersistence(verifiedMsgHandler: BufferBlock<Message>) =
 
     member self.Start() =
         async {
@@ -24,12 +21,12 @@ type internal GossipPersistence
             use dataSource = NpgsqlDataSource.Create(connectionString)
 
             while true do
-                let! msg, bytes =
+                let! msg =
                     verifiedMsgHandler.ReceiveAsync cancelToken
                     |> Async.AwaitTask
 
                 match msg with
-                | :? ChannelAnnouncementMsg as channelAnn ->
+                | RoutingMsg(:? ChannelAnnouncementMsg as channelAnn, bytes) ->
                     let sqlCommand =
                         dataSource.CreateCommand(
                             "INSERT INTO channel_announcements (short_channel_id, announcement_signed) VALUES ($1, $2) ON CONFLICT (short_channel_id) DO NOTHING"
@@ -54,7 +51,7 @@ type internal GossipPersistence
                             (channelAnn.Contents.ShortChannelId.ToUInt64())
                     )
 
-                | :? ChannelUpdateMsg as updateMsg ->
+                | RoutingMsg(:? ChannelUpdateMsg as updateMsg, bytes) ->
                     let scid =
                         updateMsg.Contents.ShortChannelId.ToUInt64() |> int64
 
