@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <Compile Include="Message.fs" />
+    <Compile Include="GossipSnapshotter.fs" />
     <Compile Include="GossipPersistence.fs" />
     <Compile Include="GossipVerifier.fs" />
     <Compile Include="GossipSyncer.fs" />

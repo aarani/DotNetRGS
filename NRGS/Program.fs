@@ -1,5 +1,6 @@
 ﻿namespace NRGS
 
+open System.Threading
 open System.Threading.Tasks.Dataflow
 
 open DotNetLightning.Serialization.Msgs
@@ -19,6 +20,8 @@ module Program =
             let toVerify = BufferBlock<Message> blockOption
             let toHandle = BufferBlock<Message> blockOption
 
+            let snapshotStartSource = new CancellationTokenSource()
+
             let syncer =
                 GossipSyncer(
                     NodeIdentifier.TcpEndPoint(
@@ -30,16 +33,17 @@ module Program =
                 )
 
             let verifier1 = GossipVerifier(toVerify, toHandle)
-            let verifier2 = GossipVerifier(toVerify, toHandle)
 
-            let persistence = GossipPersistence(toHandle)
+            let persistence = GossipPersistence(toHandle, snapshotStartSource)
+
+            let snapshotter = GossipSnapshotter snapshotStartSource.Token
 
             do!
                 MixedParallel4
                     (syncer.Start())
                     (verifier1.Start())
-                    (verifier2.Start())
                     (persistence.Start())
+                    (snapshotter.Start())
                 |> Async.Ignore
         }
         |> Async.RunSynchronously

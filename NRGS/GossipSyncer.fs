@@ -7,6 +7,7 @@ open DotNetLightning.Serialization.Msgs
 open DotNetLightning.Utils
 
 open GWallet.Backend
+open GWallet.Backend.FSharpUtil.AsyncExtensions
 open GWallet.Backend.FSharpUtil.ReflectionlessPrint
 open GWallet.Backend.UtxoCoin.Lightning
 
@@ -21,10 +22,12 @@ type internal GossipSyncer
         peer: NodeIdentifier,
         toVerifyMsgHandler: BufferBlock<Message>
     ) =
-    member __.Start() =
+
+    let msgCount = ref 0L
+
+    member __.Download() =
         async {
             let! cancelToken = Async.CancellationToken
-            cancelToken.ThrowIfCancellationRequested()
 
             let! initialNode =
                 let throwawayPrivKey =
@@ -89,6 +92,9 @@ type internal GossipSyncer
                     match response with
                     | Error e -> return failwithf "RecvMsg failed, error = %A" e
                     | Ok(newState, (:? IRoutingMsg as msg), bytes) ->
+                        System.Threading.Interlocked.Increment msgCount
+                        |> ignore<int64>
+
                         toVerifyMsgHandler.SendAsync(
                             RoutingMsg(msg, bytes),
                             cancelToken
@@ -129,4 +135,52 @@ type internal GossipSyncer
                 }
 
             do! processMessages initialNode |> Async.Ignore
+        }
+
+    member __.LookForInitialSyncFinish() =
+        async {
+            let mutable previousCounter = 0L
+            let mutable i = 0UL
+
+            let rec lookForFinishedSync() =
+                async {
+                    i <- i + 1UL
+                    do! Async.Sleep(TimeSpan.FromSeconds 5.)
+
+                    let newMsgCount = msgCount.Value
+                    let delta = newMsgCount - previousCounter
+
+                    Console.WriteLine(
+                        sprintf
+                            "initial sync gossip count (iteration %i): %i (delta: %i)"
+                            i
+                            newMsgCount
+                            delta
+                    )
+
+                    if i > 2UL && delta < 50 && previousCounter <> 0 then
+                        Console.WriteLine("Initial sync finished")
+
+                        return!
+                            toVerifyMsgHandler.SendAsync(FinishedInitialSync)
+                            |> Async.AwaitTask
+                            |> Async.Ignore
+                    else
+                        previousCounter <- newMsgCount
+                        do! lookForFinishedSync()
+                }
+
+            do! lookForFinishedSync()
+        }
+
+    member self.Start() =
+        async {
+            let! cancelToken = Async.CancellationToken
+            cancelToken.ThrowIfCancellationRequested()
+
+            do!
+                MixedParallel2
+                    (self.Download())
+                    (self.LookForInitialSyncFinish())
+                |> Async.Ignore
         }

@@ -48,7 +48,7 @@ type internal GossipVerifier
                             blockIndex
                             txOutIndex
                     )
-
+#if !DEBUG
                     let! txId =
                         Server.Query
                             Currency.BTC
@@ -89,6 +89,12 @@ type internal GossipVerifier
                     | None ->
                         Console.WriteLine
                             "Output index out of bounds in transaction"
+#else
+                    do!
+                        verifiedMsgHandler.SendAsync msg
+                        |> Async.AwaitTask
+                        |> Async.Ignore
+#endif
                 | RoutingMsg(:? ChannelUpdateMsg as _updateMsg, _bytes) ->
                     //TODO: verify msg signature
                     do!

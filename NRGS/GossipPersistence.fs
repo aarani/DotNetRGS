@@ -7,8 +7,13 @@ open DotNetLightning.Serialization.Msgs
 open DotNetLightning.Utils
 
 open Npgsql
+open System.Threading
 
-type internal GossipPersistence(verifiedMsgHandler: BufferBlock<Message>) =
+type internal GossipPersistence
+    (
+        verifiedMsgHandler: BufferBlock<Message>,
+        notifySnapshotter: CancellationTokenSource
+    ) =
 
     member self.Start() =
         async {
@@ -145,9 +150,13 @@ INSERT INTO channel_updates (
                             "Added update for channel #%i"
                             (updateMsg.Contents.ShortChannelId.ToUInt64())
                     )
-                | _ ->
-                    //TODO: technically there should be a full sync notification passing through here
-                    ()
+                | FinishedInitialSync ->
+                    Console.WriteLine(
+                        "Finished persisting initial sync, notifying snapshotter..."
+                    )
+
+                    notifySnapshotter.Cancel()
+                | _ -> ()
 
             return ()
         }
