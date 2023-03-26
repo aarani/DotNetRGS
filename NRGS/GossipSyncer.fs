@@ -1,21 +1,20 @@
 ﻿namespace NRGS
 
 open System
+open System.IO
 open System.Threading.Tasks.Dataflow
 
 open DotNetLightning.Serialization.Msgs
 open DotNetLightning.Utils
-
+open ResultUtils.Portability
 open GWallet.Backend
 open GWallet.Backend.FSharpUtil.AsyncExtensions
 open GWallet.Backend.FSharpUtil.ReflectionlessPrint
 open GWallet.Backend.UtxoCoin.Lightning
-
 open NBitcoin
-
-open ResultUtils.Portability
 open Newtonsoft.Json
-open System.IO
+
+open NRGS.Utils
 
 exception RoutingQueryException of string
 
@@ -48,14 +47,31 @@ type internal GossipSyncer
                     ConnectionPurpose.Routing
 
             let firstTimestamp =
-                if File.Exists (sprintf "syncState-%s.json" (peer.NodeId.Value.ToHex())) then
+                let twoWeeksAgoUnixTime =
+                    DateTimeUtils.ToUnixTimestamp(
+                        DateTime.Now - TimeSpan.FromDays(14.0)
+                    )
+
+                if
+                    File.Exists
+                        (sprintf "syncState-%s.json" (peer.NodeId.Value.ToHex()))
+                then
                     let syncState =
-                        File.ReadAllText (sprintf "syncState-%s.json" (peer.NodeId.Value.ToHex()))
+                        File.ReadAllText(
+                            sprintf
+                                "syncState-%s.json"
+                                (peer.NodeId.Value.ToHex())
+                        )
                         |> JsonConvert.DeserializeObject<SyncState>
-                
-                    DateTimeUtils.ToUnixTimestamp(syncState.LastSyncTimestamp.AddHours(-5))
+
+                    let lastSyncUnixTime =
+                        DateTimeUtils.ToUnixTimestamp(
+                            syncState.LastSyncTimestamp.AddHours(-5)
+                        )
+
+                    Math.Max(lastSyncUnixTime, twoWeeksAgoUnixTime)
                 else
-                    DateTimeUtils.ToUnixTimestamp(DateTime.Now - TimeSpan.FromDays(14.0))
+                    twoWeeksAgoUnixTime
 
             let gossipTimeStampFilter =
                 {
@@ -175,9 +191,15 @@ type internal GossipSyncer
                         let syncState =
                             {
                                 LastSyncTimestamp = DateTime.UtcNow
-                            } 
+                            }
                             |> JsonConvert.SerializeObject
-                        File.WriteAllText(sprintf "syncState-%s.json" (peer.NodeId.Value.ToHex()), syncState)
+
+                        File.WriteAllText(
+                            sprintf
+                                "syncState-%s.json"
+                                (peer.NodeId.Value.ToHex()),
+                            syncState
+                        )
 
                         return!
                             toVerifyMsgHandler.SendAsync(FinishedInitialSync)

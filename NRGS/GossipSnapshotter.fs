@@ -6,12 +6,16 @@ open System.Threading
 
 open NBitcoin
 
+open DotNetLightning.Serialization
 open DotNetLightning.Serialization.Msgs
 open DotNetLightning.Utils
 
 open ResultUtils.Portability
 
 open Npgsql
+
+open NRGS.Utils
+open NRGS.Utils.FSharpUtil
 
 type MutatedProperties =
     {
@@ -32,6 +36,27 @@ type MutatedProperties =
             FeeProportionalMillionths = false
             HtlcMaximumMSat = false
         }
+
+    /// Does not include flags because the flag byte is always sent in full
+    member self.Length() =
+        let mutable mutations = 0
+
+        if self.CltvExpiryDelta then
+            mutations <- mutations + 1
+
+        if self.HtlcMinimumMSat then
+            mutations <- mutations + 1
+
+        if self.FeeBaseMSat then
+            mutations <- mutations + 1
+
+        if self.FeeProportionalMillionths then
+            mutations <- mutations + 1
+
+        if self.HtlcMaximumMSat then
+            mutations <- mutations + 1
+
+        mutations
 
 type AnnouncementDelta =
     {
@@ -74,6 +99,63 @@ type ChannelDelta =
         }
 
 type DeltaSet = Map<ShortChannelId, ChannelDelta>
+
+type ChainHash = uint256
+
+type DefaultUpdateValues =
+    {
+        CLTVExpiryDelta: BlockHeightOffset16
+        HTLCMinimumMSat: LNMoney
+        FeeBaseMSat: LNMoney
+        FeeProportionalMillionths: uint32
+        HTLCMaximumMSat: LNMoney
+    }
+
+    static member Default =
+        {
+            CLTVExpiryDelta = BlockHeightOffset16.Zero
+            HTLCMinimumMSat = LNMoney.Zero
+            FeeBaseMSat = LNMoney.Zero
+            FeeProportionalMillionths = 0u
+            HTLCMaximumMSat = LNMoney.Zero
+        }
+
+type UpdateSerializationMechanism =
+    | Full
+    | Incremental of MutatedProperties
+
+type UpdateSerialization =
+    {
+        Update: UnsignedChannelUpdateMsg
+        Mechanism: UpdateSerializationMechanism
+    }
+
+type SerializationSet =
+    {
+        mutable Announcements: List<UnsignedChannelAnnouncementMsg>
+        mutable Updates: List<UpdateSerialization>
+        mutable FullUpdateDefaults: DefaultUpdateValues
+        mutable LastestSeen: uint32
+        mutable ChainHash: ChainHash
+    }
+
+type FullUpdateValueHistograms =
+    {
+        mutable CLTVExpiryDelta: Histogram<BlockHeightOffset16>
+        mutable HTLCMinimumMSat: Histogram<LNMoney>
+        mutable FeeBaseMSat: Histogram<LNMoney>
+        mutable FeeProportionalMillionths: Histogram<uint32>
+        mutable HTLCMaximumMSat: Histogram<LNMoney>
+    }
+
+    static member Default =
+        {
+            CLTVExpiryDelta = Histogram.empty
+            HTLCMinimumMSat = Histogram.empty
+            FeeBaseMSat = Histogram.empty
+            FeeProportionalMillionths = Histogram.empty
+            HTLCMaximumMSat = Histogram.empty
+        }
 
 module EasyLightningReader =
     let readStreamToEnd(stream: Stream) =
@@ -154,10 +236,9 @@ type GossipSnapshotter(startToken: CancellationToken) =
                                         }
 
                                     return!
-                                        readRow(
-                                            deltaSet
-                                            |> Map.add scId channelDelta
-                                        )
+                                        deltaSet
+                                        |> Map.add scId channelDelta
+                                        |> readRow
                                 else
                                     return deltaSet
                             }
@@ -215,10 +296,9 @@ type GossipSnapshotter(startToken: CancellationToken) =
                                         }
 
                                     return!
-                                        readRow(
-                                            deltaSet
-                                            |> Map.add scId channelDelta
-                                        )
+                                        deltaSet
+                                        |> Map.add scId channelDelta
+                                        |> readRow
                                 else
                                     return deltaSet
                             }
@@ -323,10 +403,9 @@ type GossipSnapshotter(startToken: CancellationToken) =
                                             }
 
                                     return!
-                                        readRow(
-                                            deltaSet
-                                            |> Map.add scId channelDelta
-                                        )
+                                        deltaSet
+                                        |> Map.add scId channelDelta
+                                        |> readRow
                                 else
                                     return deltaSet
                             }
@@ -361,7 +440,9 @@ type GossipSnapshotter(startToken: CancellationToken) =
                     let! reader =
                         readCommand.ExecuteReaderAsync() |> Async.AwaitTask
 
-                    let mutable previousShortChannelId = UInt64.MaxValue
+                    let mutable previousShortChannelId =
+                        ShortChannelId.FromUInt64 UInt64.MaxValue
+
                     let mutable previouslySeenDirections = (false, false)
 
                     if reader.HasRows then
@@ -384,6 +465,12 @@ type GossipSnapshotter(startToken: CancellationToken) =
 
                                         let scId =
                                             updateMsg.Contents.ShortChannelId
+
+                                        if previousShortChannelId <> scId then
+                                            previousShortChannelId <- scId
+
+                                            previouslySeenDirections <-
+                                                false, false
 
                                         let currentSeenTimestamp =
                                             reader.GetDateTime 3
@@ -492,10 +579,10 @@ type GossipSnapshotter(startToken: CancellationToken) =
                                                 }
 
                                         return!
-                                            readRow(
-                                                deltaSet
-                                                |> Map.add scId channelDelta
-                                            )
+                                            deltaSet
+                                            |> Map.add scId channelDelta
+                                            |> readRow
+
                                 else
                                     return deltaSet
                             }
@@ -534,23 +621,334 @@ type GossipSnapshotter(startToken: CancellationToken) =
                        && updateMeetsCriteria(snd delta.Updates) |> not then
                         filter tail state
                     else
-                        filter tail ((scId, delta)::state)
+                        filter tail ((scId, delta) :: state)
             | [] -> state
 
         filter (deltaSet |> Map.toList) List.empty |> Map.ofList
 
-    member __.SerializeDelta() =
+    let serializeDeltaSet (deltaSet: DeltaSet) (lastSyncTimestamp: uint32) =
+        let serializationSet =
+            {
+                Announcements = List.Empty
+                Updates = List.Empty
+                FullUpdateDefaults = DefaultUpdateValues.Default
+                LastestSeen = 0u
+                ChainHash = uint256.Zero
+            }
+
+        let mutable chainHashSet = false
+
+        let fullUpdateHistograms = FullUpdateValueHistograms.Default
+
+        let recordFullUpdateInHistograms(fullUpdate: UnsignedChannelUpdateMsg) =
+            fullUpdateHistograms.CLTVExpiryDelta <-
+                fullUpdateHistograms.CLTVExpiryDelta
+                |> Map.change
+                    fullUpdate.CLTVExpiryDelta
+                    (fun previousValue ->
+                        Some((Option.defaultValue 0u previousValue) + 1u)
+                    )
+
+            fullUpdateHistograms.HTLCMinimumMSat <-
+                fullUpdateHistograms.HTLCMinimumMSat
+                |> Map.change
+                    fullUpdate.HTLCMinimumMSat
+                    (fun previousValue ->
+                        Some((Option.defaultValue 0u previousValue) + 1u)
+                    )
+
+            fullUpdateHistograms.FeeBaseMSat <-
+                fullUpdateHistograms.FeeBaseMSat
+                |> Map.change
+                    fullUpdate.FeeBaseMSat
+                    (fun previousValue ->
+                        Some((Option.defaultValue 0u previousValue) + 1u)
+                    )
+
+            fullUpdateHistograms.FeeProportionalMillionths <-
+                fullUpdateHistograms.FeeProportionalMillionths
+                |> Map.change
+                    fullUpdate.FeeProportionalMillionths
+                    (fun previousValue ->
+                        Some((Option.defaultValue 0u previousValue) + 1u)
+                    )
+
+            fullUpdateHistograms.HTLCMaximumMSat <-
+                fullUpdateHistograms.HTLCMaximumMSat
+                |> Map.change
+                    fullUpdate.HTLCMaximumMSat.Value
+                    (fun previousValue ->
+                        Some((Option.defaultValue 0u previousValue) + 1u)
+                    )
+
+        for (_scId, channelDelta) in deltaSet |> Map.toSeq do
+            let channelAnnouncementDelta =
+                UnwrapOption
+                    channelDelta.Announcement
+                    "channelDelta.Announcement is none, did you forget to run filterDeltaSet?"
+
+            if not chainHashSet then
+                chainHashSet <- true
+
+                serializationSet.ChainHash <-
+                    channelAnnouncementDelta.Announcement.ChainHash
+
+            let CurrentAnnouncementSeen = channelAnnouncementDelta.Seen
+            let isNewAnnouncement = CurrentAnnouncementSeen >= lastSyncTimestamp
+
+            let isNewlyUpdatedAnnouncement =
+                match channelDelta.FirstUpdateSeen with
+                | Some firstUpdateSeen -> firstUpdateSeen >= lastSyncTimestamp
+                | None -> false
+
+            let sendAnnouncement =
+                isNewAnnouncement || isNewlyUpdatedAnnouncement
+
+            if sendAnnouncement then
+                serializationSet.LastestSeen <-
+                    max serializationSet.LastestSeen CurrentAnnouncementSeen
+
+                serializationSet.Announcements <-
+                    channelAnnouncementDelta.Announcement
+                    :: serializationSet.Announcements
+
+            let directionAUpdates, directionBUpdates = channelDelta.Updates
+
+            let categorizeDirectedUpdateSerialization
+                (directedUpdates: Option<DirectedUpdateDelta>)
+                =
+                match directedUpdates with
+                | Some updates ->
+                    match updates.LastUpdateAfterSeen with
+                    | Some latestUpdateDelta ->
+                        let latestUpdate = latestUpdateDelta.Update
+
+                        serializationSet.LastestSeen <-
+                            max
+                                serializationSet.LastestSeen
+                                latestUpdateDelta.Seen
+
+                        if updates.LastUpdateBeforeSeen.IsSome then
+                            let mutatedProperties = updates.MutatedProperties
+
+                            if mutatedProperties.Length() = 5 then
+                                // all five values have changed, it makes more sense to just
+                                // serialize the update as a full update instead of as a change
+                                // this way, the default values can be computed more efficiently
+                                recordFullUpdateInHistograms latestUpdate
+
+                                serializationSet.Updates <-
+                                    {
+                                        Update = latestUpdate
+                                        Mechanism =
+                                            UpdateSerializationMechanism.Full
+                                    }
+                                    :: serializationSet.Updates
+                            elif mutatedProperties.Length() > 0
+                                 || mutatedProperties.Flags then
+                                // we don't count flags as mutated properties
+                                serializationSet.Updates <-
+                                    {
+                                        Update = latestUpdate
+                                        Mechanism =
+                                            UpdateSerializationMechanism.Incremental
+                                                mutatedProperties
+                                    }
+                                    :: serializationSet.Updates
+                            else
+                                recordFullUpdateInHistograms latestUpdate
+
+                                serializationSet.Updates <-
+                                    {
+                                        Update = latestUpdate
+                                        Mechanism =
+                                            UpdateSerializationMechanism.Full
+                                    }
+                                    :: serializationSet.Updates
+                    | None -> ()
+                | None -> ()
+
+            categorizeDirectedUpdateSerialization directionAUpdates
+            categorizeDirectedUpdateSerialization directionBUpdates
+
+        serializationSet.FullUpdateDefaults <-
+            {
+                CLTVExpiryDelta =
+                    Histogram.findMostCommonHistogramEntryWithDefault
+                        fullUpdateHistograms.CLTVExpiryDelta
+                        BlockHeightOffset16.Zero
+                HTLCMinimumMSat =
+                    Histogram.findMostCommonHistogramEntryWithDefault
+                        fullUpdateHistograms.HTLCMinimumMSat
+                        LNMoney.Zero
+                FeeBaseMSat =
+                    Histogram.findMostCommonHistogramEntryWithDefault
+                        fullUpdateHistograms.FeeBaseMSat
+                        LNMoney.Zero
+                FeeProportionalMillionths =
+                    Histogram.findMostCommonHistogramEntryWithDefault
+                        fullUpdateHistograms.FeeProportionalMillionths
+                        0u
+                HTLCMaximumMSat =
+                    Histogram.findMostCommonHistogramEntryWithDefault
+                        fullUpdateHistograms.HTLCMaximumMSat
+                        LNMoney.Zero
+            }
+
+        serializationSet
+
+    let serializeStrippedChannelAnnouncement
+        (announcement: UnsignedChannelAnnouncementMsg)
+        (nodeIdAIndex: int)
+        (nodeIdBIndex: int)
+        (previousSCId: ShortChannelId)
+        =
+        if previousSCId > announcement.ShortChannelId then
+            failwith "unsorted scids!"
+
+        use memStream = new MemoryStream()
+        use writerStream = new LightningWriterStream(memStream)
+
+        let features = announcement.Features.ToByteArray()
+
+        writerStream.WriteWithLen features
+
+        writerStream.WriteBigSize(
+            announcement.ShortChannelId.ToUInt64() - previousSCId.ToUInt64()
+        )
+
+        writerStream.WriteBigSize(uint64 nodeIdAIndex)
+        writerStream.WriteBigSize(uint64 nodeIdBIndex)
+
+        memStream.ToArray()
+
+    let serializeStrippedChannelUpdate
+        (update: UpdateSerialization)
+        (defaultValues: DefaultUpdateValues)
+        (previousSCId: ShortChannelId)
+        =
+        let latestUpdate = update.Update
+        let mutable serializedFlags = latestUpdate.ChannelFlags
+
+        if previousSCId > latestUpdate.ShortChannelId then
+            failwith "unsorted scids!"
+
+        use deltaMemStream = new MemoryStream()
+        use deltaWriterStream = new LightningWriterStream(deltaMemStream)
+
+        match update.Mechanism with
+        | UpdateSerializationMechanism.Full ->
+            if latestUpdate.CLTVExpiryDelta <> defaultValues.CLTVExpiryDelta then
+                serializedFlags <- serializedFlags ||| 0b0100_0000uy
+
+                deltaWriterStream.Write(
+                    latestUpdate.CLTVExpiryDelta.Value,
+                    false
+                )
+
+            if latestUpdate.HTLCMinimumMSat <> defaultValues.HTLCMinimumMSat then
+                serializedFlags <- serializedFlags ||| 0b0010_0000uy
+
+                deltaWriterStream.Write(
+                    latestUpdate.HTLCMinimumMSat.MilliSatoshi,
+                    false
+                )
+
+            if latestUpdate.FeeBaseMSat <> defaultValues.FeeBaseMSat then
+                serializedFlags <- serializedFlags ||| 0b0001_0000uy
+
+                deltaWriterStream.Write(
+                    latestUpdate.FeeBaseMSat.MilliSatoshi,
+                    false
+                )
+
+            if latestUpdate.FeeProportionalMillionths
+               <> defaultValues.FeeProportionalMillionths then
+                serializedFlags <- serializedFlags ||| 0b0000_1000uy
+
+                deltaWriterStream.Write(
+                    latestUpdate.FeeProportionalMillionths,
+                    false
+                )
+
+            if latestUpdate.HTLCMaximumMSat.Value
+               <> defaultValues.HTLCMaximumMSat then
+                serializedFlags <- serializedFlags ||| 0b0000_0100uy
+
+                deltaWriterStream.Write(
+                    latestUpdate.HTLCMaximumMSat.Value.MilliSatoshi,
+                    false
+                )
+        | UpdateSerializationMechanism.Incremental mutatedProperties ->
+            serializedFlags <- serializedFlags ||| 0b1000_0000uy
+
+            if mutatedProperties.CltvExpiryDelta then
+                serializedFlags <- serializedFlags ||| 0b0100_0000uy
+
+                deltaWriterStream.Write(
+                    latestUpdate.CLTVExpiryDelta.Value,
+                    false
+                )
+
+            if mutatedProperties.HtlcMinimumMSat then
+                serializedFlags <- serializedFlags ||| 0b0010_0000uy
+
+                deltaWriterStream.Write(
+                    latestUpdate.HTLCMinimumMSat.MilliSatoshi,
+                    false
+                )
+
+            if mutatedProperties.FeeBaseMSat then
+                serializedFlags <- serializedFlags ||| 0b0001_0000uy
+
+                deltaWriterStream.Write(
+                    latestUpdate.FeeBaseMSat.MilliSatoshi,
+                    false
+                )
+
+            if mutatedProperties.FeeProportionalMillionths then
+                serializedFlags <- serializedFlags ||| 0b0000_1000uy
+
+                deltaWriterStream.Write(
+                    latestUpdate.FeeProportionalMillionths,
+                    false
+                )
+
+            if mutatedProperties.HtlcMaximumMSat then
+                serializedFlags <- serializedFlags ||| 0b0000_0100uy
+
+                deltaWriterStream.Write(
+                    latestUpdate.HTLCMaximumMSat.Value.MilliSatoshi,
+                    false
+                )
+
+        use prefixedMemStream = new MemoryStream()
+        use prefixedWriterStream = new LightningWriterStream(prefixedMemStream)
+
+        prefixedWriterStream.WriteBigSize(
+            update.Update.ShortChannelId.ToUInt64() - previousSCId.ToUInt64()
+        )
+
+        prefixedWriterStream.WriteByte serializedFlags
+        deltaMemStream.CopyTo prefixedMemStream
+
+        prefixedMemStream.ToArray()
+
+    member __.SerializeDelta(lastSyncTimestamp: DateTime) =
         async {
+            use outputMemStream = new MemoryStream()
+            use outputWriter = new LightningWriterStream(outputMemStream)
+
             let mutable nodeIdsSet = Set<array<byte>>(Seq.empty)
             let mutable nodeIds = List<PubKey>.Empty
             let mutable nodeIdsIndices = Map<array<byte>, int>(Seq.empty)
 
-            let getNodeIdIndex(pubKey: PubKey) =
-                let serializedNodeId = pubKey.ToBytes()
+            let getNodeIdIndex(nodeId: NodeId) =
+                let serializedNodeId = nodeId.Value.ToBytes()
 
                 if nodeIdsSet |> Set.contains serializedNodeId |> not then
                     nodeIdsSet <- nodeIdsSet.Add serializedNodeId
-                    nodeIds <- nodeIds @ List.singleton pubKey
+                    nodeIds <- nodeIds @ List.singleton nodeId.Value
                     let index = nodeIds.Length - 1
 
                     nodeIdsIndices <-
@@ -562,13 +960,44 @@ type GossipSnapshotter(startToken: CancellationToken) =
 
             let deltaSet = DeltaSet(Seq.empty)
 
-            let! deltaSet =
-                fetchChannelAnnouncements deltaSet (DateTime.Today.AddHours -5.)
+            let! deltaSet = fetchChannelAnnouncements deltaSet lastSyncTimestamp
 
-            let! deltaSet =
-                fetchChannelUpdates deltaSet (DateTime.Today.AddHours -5.) true
+            let! deltaSet = fetchChannelUpdates deltaSet lastSyncTimestamp true
 
             let deltaSet = filterDeltaSet deltaSet
+
+            let serializationDetails =
+                serializeDeltaSet
+                    deltaSet
+                    (DateTimeUtils.ToUnixTimestamp lastSyncTimestamp)
+
+            let announcementCount =
+                uint32 serializationDetails.Announcements.Length
+
+            outputWriter.Write(announcementCount, false)
+
+            let mutable previousAnnouncementSCId = ShortChannelId.FromUInt64 0UL
+
+            // process announcements
+            // write the number of channel announcements to the output
+            for currentAnnouncement in serializationDetails.Announcements do
+                let idIndex1 = getNodeIdIndex currentAnnouncement.NodeId1
+                let idIndex2 = getNodeIdIndex currentAnnouncement.NodeId2
+
+                let strippedAnnouncement =
+                    serializeStrippedChannelAnnouncement
+                        currentAnnouncement
+                        idIndex1
+                        idIndex2
+                        previousAnnouncementSCId
+
+                outputMemStream.Write(
+                    strippedAnnouncement,
+                    0,
+                    strippedAnnouncement.Length
+                )
+
+                previousAnnouncementSCId <- currentAnnouncement.ShortChannelId
 
             Console.WriteLine(deltaSet.Count)
             return ()
@@ -583,7 +1012,7 @@ type GossipSnapshotter(startToken: CancellationToken) =
             let rec snapshot() =
                 async {
                     //TODO: create snapshots
-                    do! self.SerializeDelta()
+                    do! self.SerializeDelta(DateTime.UtcNow.Date.AddDays -1.)
 
                     let nextSnapshot = DateTime.UtcNow.Date.AddDays 1.
 
