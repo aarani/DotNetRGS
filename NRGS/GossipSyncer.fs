@@ -66,7 +66,13 @@ type internal GossipSyncer
 
                     let lastSyncUnixTime =
                         DateTimeUtils.ToUnixTimestamp(
-                            syncState.LastSyncTimestamp.AddHours(-5)
+                            syncState.LastSyncTimestamp.AddHours(
+#if DEBUG
+                                0
+#else
+                                -5
+#endif
+                            )
                         )
 
                     Math.Max(lastSyncUnixTime, twoWeeksAgoUnixTime)

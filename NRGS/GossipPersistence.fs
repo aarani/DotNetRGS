@@ -50,11 +50,13 @@ type internal GossipPersistence
                         |> Async.AwaitTask
                         |> Async.Ignore
 
+                (*
                     Console.WriteLine(
                         sprintf
                             "Added channel #%i"
                             (channelAnn.Contents.ShortChannelId.ToUInt64())
                     )
+                    *)
 
                 | RoutingMsg(:? ChannelUpdateMsg as updateMsg, bytes) ->
                     let scid =
@@ -145,11 +147,13 @@ INSERT INTO channel_updates (
                         |> Async.AwaitTask
                         |> Async.Ignore
 
-                    Console.WriteLine(
-                        sprintf
-                            "Added update for channel #%i"
-                            (updateMsg.Contents.ShortChannelId.ToUInt64())
-                    )
+                (*
+                Console.WriteLine(
+                    sprintf
+                        "Added update for channel #%i"
+                        (updateMsg.Contents.ShortChannelId.ToUInt64())
+                )
+                *)
                 | FinishedInitialSync ->
                     Console.WriteLine(
                         "Finished persisting initial sync, notifying snapshotter..."

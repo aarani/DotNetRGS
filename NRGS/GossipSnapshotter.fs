@@ -16,6 +16,7 @@ open Npgsql
 
 open NRGS.Utils
 open NRGS.Utils.FSharpUtil
+open System.Diagnostics
 
 type MutatedProperties =
     {
@@ -177,7 +178,6 @@ module EasyLightningReader =
             | Ok(:? 'T as msg) -> return msg
             | _ -> return failwith "how the fuck we have an invalid msg in DB"
         }
-
 
 type GossipSnapshotter(startToken: CancellationToken) =
     let dataSource =
@@ -755,16 +755,16 @@ type GossipSnapshotter(startToken: CancellationToken) =
                                                 mutatedProperties
                                     }
                                     :: serializationSet.Updates
-                            else
-                                recordFullUpdateInHistograms latestUpdate
+                        else
+                            recordFullUpdateInHistograms latestUpdate
 
-                                serializationSet.Updates <-
-                                    {
-                                        Update = latestUpdate
-                                        Mechanism =
-                                            UpdateSerializationMechanism.Full
-                                    }
-                                    :: serializationSet.Updates
+                            serializationSet.Updates <-
+                                {
+                                    Update = latestUpdate
+                                    Mechanism =
+                                        UpdateSerializationMechanism.Full
+                                }
+                                :: serializationSet.Updates
                     | None -> ()
                 | None -> ()
 
@@ -850,7 +850,7 @@ type GossipSnapshotter(startToken: CancellationToken) =
                 serializedFlags <- serializedFlags ||| 0b0010_0000uy
 
                 deltaWriterStream.Write(
-                    latestUpdate.HTLCMinimumMSat.MilliSatoshi,
+                    latestUpdate.HTLCMinimumMSat.MilliSatoshi |> uint64,
                     false
                 )
 
@@ -858,7 +858,7 @@ type GossipSnapshotter(startToken: CancellationToken) =
                 serializedFlags <- serializedFlags ||| 0b0001_0000uy
 
                 deltaWriterStream.Write(
-                    latestUpdate.FeeBaseMSat.MilliSatoshi,
+                    latestUpdate.FeeBaseMSat.MilliSatoshi |> uint32,
                     false
                 )
 
@@ -876,7 +876,7 @@ type GossipSnapshotter(startToken: CancellationToken) =
                 serializedFlags <- serializedFlags ||| 0b0000_0100uy
 
                 deltaWriterStream.Write(
-                    latestUpdate.HTLCMaximumMSat.Value.MilliSatoshi,
+                    latestUpdate.HTLCMaximumMSat.Value.MilliSatoshi |> uint64,
                     false
                 )
         | UpdateSerializationMechanism.Incremental mutatedProperties ->
@@ -894,7 +894,7 @@ type GossipSnapshotter(startToken: CancellationToken) =
                 serializedFlags <- serializedFlags ||| 0b0010_0000uy
 
                 deltaWriterStream.Write(
-                    latestUpdate.HTLCMinimumMSat.MilliSatoshi,
+                    latestUpdate.HTLCMinimumMSat.MilliSatoshi |> uint64,
                     false
                 )
 
@@ -902,7 +902,7 @@ type GossipSnapshotter(startToken: CancellationToken) =
                 serializedFlags <- serializedFlags ||| 0b0001_0000uy
 
                 deltaWriterStream.Write(
-                    latestUpdate.FeeBaseMSat.MilliSatoshi,
+                    latestUpdate.FeeBaseMSat.MilliSatoshi |> uint32,
                     false
                 )
 
@@ -918,7 +918,7 @@ type GossipSnapshotter(startToken: CancellationToken) =
                 serializedFlags <- serializedFlags ||| 0b0000_0100uy
 
                 deltaWriterStream.Write(
-                    latestUpdate.HTLCMaximumMSat.Value.MilliSatoshi,
+                    latestUpdate.HTLCMaximumMSat.Value.MilliSatoshi |> uint64,
                     false
                 )
 
@@ -930,11 +930,14 @@ type GossipSnapshotter(startToken: CancellationToken) =
         )
 
         prefixedWriterStream.WriteByte serializedFlags
-        deltaMemStream.CopyTo prefixedMemStream
+        prefixedWriterStream.Write(deltaMemStream.ToArray())
 
         prefixedMemStream.ToArray()
 
-    member __.SerializeDelta(lastSyncTimestamp: DateTime) =
+    member __.SerializeDelta
+        (lastSyncTimestamp: DateTime)
+        (considerIntermediateUpdates: bool)
+        =
         async {
             use outputMemStream = new MemoryStream()
             use outputWriter = new LightningWriterStream(outputMemStream)
@@ -962,7 +965,11 @@ type GossipSnapshotter(startToken: CancellationToken) =
 
             let! deltaSet = fetchChannelAnnouncements deltaSet lastSyncTimestamp
 
-            let! deltaSet = fetchChannelUpdates deltaSet lastSyncTimestamp true
+            let! deltaSet =
+                fetchChannelUpdates
+                    deltaSet
+                    lastSyncTimestamp
+                    considerIntermediateUpdates
 
             let deltaSet = filterDeltaSet deltaSet
 
@@ -976,11 +983,15 @@ type GossipSnapshotter(startToken: CancellationToken) =
 
             outputWriter.Write(announcementCount, false)
 
+            let announcements =
+                serializationDetails.Announcements
+                |> Seq.sortBy(fun ann -> ann.ShortChannelId.ToUInt64())
+
             let mutable previousAnnouncementSCId = ShortChannelId.FromUInt64 0UL
 
             // process announcements
             // write the number of channel announcements to the output
-            for currentAnnouncement in serializationDetails.Announcements do
+            for currentAnnouncement in announcements do
                 let idIndex1 = getNodeIdIndex currentAnnouncement.NodeId1
                 let idIndex2 = getNodeIdIndex currentAnnouncement.NodeId2
 
@@ -999,27 +1010,193 @@ type GossipSnapshotter(startToken: CancellationToken) =
 
                 previousAnnouncementSCId <- currentAnnouncement.ShortChannelId
 
-            Console.WriteLine(deltaSet.Count)
-            return ()
+            let mutable previousUpdateSCId = ShortChannelId.FromUInt64 0UL
+
+            let updateCount = uint32 serializationDetails.Updates.Length
+            outputWriter.Write(updateCount, false)
+
+            let defaultValues = serializationDetails.FullUpdateDefaults
+
+            if updateCount > 0u then
+                outputWriter.Write(defaultValues.CLTVExpiryDelta.Value, false)
+
+                outputWriter.Write(
+                    defaultValues.HTLCMinimumMSat.Value |> uint64,
+                    false
+                )
+
+                outputWriter.Write(
+                    defaultValues.FeeBaseMSat.MilliSatoshi |> uint32,
+                    false
+                )
+
+                outputWriter.Write(
+                    defaultValues.FeeProportionalMillionths,
+                    false
+                )
+
+                outputWriter.Write(
+                    defaultValues.HTLCMaximumMSat.MilliSatoshi |> uint64,
+                    false
+                )
+
+            let updates =
+                serializationDetails.Updates
+                |> Seq.sortBy(fun update ->
+                    update.Update.ShortChannelId.ToUInt64()
+                )
+
+            for currentUpdate in updates do
+                let strippedChannelUpdate =
+                    serializeStrippedChannelUpdate
+                        currentUpdate
+                        defaultValues
+                        previousUpdateSCId
+
+                outputMemStream.Write(
+                    strippedChannelUpdate,
+                    0,
+                    strippedChannelUpdate.Length
+                )
+
+                previousUpdateSCId <- currentUpdate.Update.ShortChannelId
+
+            let prefixedOutputMemStream = new MemoryStream()
+
+            let prefixedOutputWriter =
+                new LightningWriterStream(prefixedOutputMemStream)
+
+            let prefix = [| 76uy; 68uy; 75uy; 1uy |]
+            prefixedOutputWriter.Write(prefix)
+            prefixedOutputWriter.Write(serializationDetails.ChainHash, true)
+            let lastSeenTimestamp = serializationDetails.LastestSeen
+            let overflowSeconds = lastSeenTimestamp % 86400u
+
+            prefixedOutputWriter.Write(
+                lastSeenTimestamp - overflowSeconds,
+                false
+            )
+
+            let nodeIdCount = nodeIds.Length |> uint32
+            prefixedOutputWriter.Write(nodeIdCount, false)
+
+            for currentNodeId in nodeIds do
+                prefixedOutputWriter.Write(currentNodeId.ToBytes())
+
+            prefixedOutputWriter.Write(outputMemStream.ToArray())
+
+            let messageCount = announcementCount + updateCount
+
+            Console.WriteLine(
+                sprintf "Snapshot created! Message count: %i" messageCount
+            )
+
+            return prefixedOutputMemStream.ToArray()
         }
-
-
 
     member self.Start() =
         async {
             do! startToken.WaitHandle |> Async.AwaitWaitHandle |> Async.Ignore
 
+            let snapshotSyncDayFactors =
+                [
+                    Int32.MaxValue
+                    1
+                    2
+                    3
+                    4
+                    5
+                    6
+                    7
+                    14
+                    21
+                ]
+
             let rec snapshot() =
                 async {
-                    //TODO: create snapshots
-                    do! self.SerializeDelta(DateTime.UtcNow.Date.AddDays -1.)
+                    try
+                        let snapshotGenerationTimestamp = DateTime.UtcNow
 
-                    let nextSnapshot = DateTime.UtcNow.Date.AddDays 1.
+                        let referenceTimestamp =
+                            snapshotGenerationTimestamp.Date
 
-                    // sleep until next day
-                    // FIXME: is it possible that this cause problem when we're exteremely close to the end of day? (negetive timespan and etc)
-                    do! Async.Sleep(nextSnapshot.Subtract DateTime.UtcNow)
-                    return! snapshot()
+                        Console.WriteLine(
+                            sprintf
+                                "Capturing snapshots at %i for: %i"
+                                (DateTimeUtils.ToUnixTimestamp
+                                    snapshotGenerationTimestamp)
+                                (DateTimeUtils.ToUnixTimestamp
+                                    referenceTimestamp)
+                        )
+
+                        let mutable snapshotSyncTimestamps =
+                            snapshotSyncDayFactors
+                            |> List.map(fun factor ->
+                                let timestamp =
+                                    if factor <> Int32.MaxValue then
+                                        referenceTimestamp.Subtract(
+                                            TimeSpan.FromDays(factor)
+                                        )
+                                    else
+                                        DateTime.MinValue
+
+                                factor, timestamp
+                            )
+
+                        let mutable snapshotFilenamesByDayRange =
+                            list<int * string>.Empty
+
+                        //WARNING: don't try to parallelize this, it chews memory.
+                        for (dayRange, currentLastSyncTimestamp) in
+                            snapshotSyncTimestamps do
+                            let stopWatch = Stopwatch()
+                            stopWatch.Start()
+
+                            let! snapshot =
+                                self.SerializeDelta
+                                    currentLastSyncTimestamp
+                                    true
+
+                            let fileName =
+                                sprintf
+                                    "snapshot__calculated-at-%i__range-%i-days__previous-sync-%i.lngossip"
+                                    (DateTimeUtils.ToUnixTimestamp
+                                        referenceTimestamp)
+                                    dayRange
+                                    (DateTimeUtils.ToUnixTimestamp
+                                        currentLastSyncTimestamp)
+
+                            File.WriteAllBytes(fileName, snapshot)
+
+                            stopWatch.Stop()
+
+                            Console.WriteLine(
+                                sprintf
+                                    "Snapshot saved, it took %f seconds to create it"
+                                    stopWatch.Elapsed.TotalSeconds
+                            )
+
+                            snapshotFilenamesByDayRange <-
+                                snapshotFilenamesByDayRange
+                                @ List.singleton(dayRange, fileName)
+
+                        // constructing the snapshots may have taken a while
+                        let nextSnapshot = DateTime.UtcNow.Date.AddDays 1
+
+                        let timeUntilNextDay =
+                            nextSnapshot.Subtract DateTime.UtcNow
+
+                        Console.WriteLine(
+                            sprintf
+                                "Sleeping until next snapshot capture: %is"
+                                timeUntilNextDay.Seconds
+                        )
+
+                        // sleep until next day
+                        do! Async.Sleep timeUntilNextDay
+                        return! snapshot()
+                    with
+                    | ex -> Console.WriteLine(ex.ToString())
                 }
 
             do! snapshot()

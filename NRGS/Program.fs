@@ -3,7 +3,6 @@
 open System.Threading
 open System.Threading.Tasks.Dataflow
 
-open DotNetLightning.Serialization.Msgs
 open DotNetLightning.Utils
 
 open GWallet.Backend

@@ -9,7 +9,10 @@ module DateTimeUtils =
         dt - UnixEpoch
 
     let internal ToUnixTimestamp(dt: DateTime) =
-        (GetTimeSpanSinceEpoch dt).TotalSeconds |> uint
+        if dt < UnixEpoch then
+            0u
+        else
+            (GetTimeSpanSinceEpoch dt).TotalSeconds |> uint
 
     let internal FromUnixTimestamp(num: uint) =
         num |> float |> UnixEpoch.AddSeconds

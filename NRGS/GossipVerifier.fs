@@ -41,6 +41,7 @@ type internal GossipVerifier
                     let txOutIndex =
                         channelAnn.Contents.ShortChannelId.TxOutIndex.Value
 
+                    (*
                     Console.WriteLine(
                         sprintf
                             "Looking to verify #%i,#%i,#%i"
@@ -48,6 +49,7 @@ type internal GossipVerifier
                             blockIndex
                             txOutIndex
                     )
+                    *)
 #if !DEBUG
                     let! txId =
                         Server.Query
