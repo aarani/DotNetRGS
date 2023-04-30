@@ -1,5 +1,6 @@
 ﻿namespace NRGS
 
+open System
 open System.Threading
 open System.Threading.Tasks.Dataflow
 
@@ -36,6 +37,10 @@ module Program =
             let persistence = GossipPersistence(toHandle, snapshotStartSource)
 
             let snapshotter = GossipSnapshotter snapshotStartSource.Token
+
+            Console.WriteLine(
+                sprintf "NRGS[%s]: started" (DateTime.UtcNow.ToString())
+            )
 
             do!
                 MixedParallel4

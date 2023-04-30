@@ -196,14 +196,12 @@ type GossipSnapshotter(startToken: CancellationToken) =
                         dataSource.CreateCommand
                             "SELECT announcement_signed, seen FROM channel_announcements ORDER BY short_channel_id ASC"
 
-                    let! reader =
-                        readAnns.ExecuteReaderAsync() |> Async.AwaitTask
+                    let reader = readAnns.ExecuteReader()
 
                     if reader.HasRows then
                         let rec readRow deltaSet =
                             async {
-                                let! readResult =
-                                    reader.ReadAsync() |> Async.AwaitTask
+                                let readResult = reader.Read()
 
                                 if readResult then
                                     let! annSigned =
@@ -263,14 +261,12 @@ type GossipSnapshotter(startToken: CancellationToken) =
                     readNewUpdates.Parameters.AddWithValue lastSyncTimestamp
                     |> ignore<NpgsqlParameter>
 
-                    let! reader =
-                        readNewUpdates.ExecuteReaderAsync() |> Async.AwaitTask
+                    let reader = readNewUpdates.ExecuteReader()
 
                     if reader.HasRows then
                         let rec readRow deltaSet =
                             async {
-                                let! readResult =
-                                    reader.ReadAsync() |> Async.AwaitTask
+                                let readResult = reader.Read()
 
                                 if readResult then
                                     let! update =
@@ -334,14 +330,12 @@ type GossipSnapshotter(startToken: CancellationToken) =
                     readCommand.Parameters.AddWithValue lastSyncTimeStamp
                     |> ignore<NpgsqlParameter>
 
-                    let! reader =
-                        readCommand.ExecuteReaderAsync() |> Async.AwaitTask
+                    let reader = readCommand.ExecuteReader()
 
                     if reader.HasRows then
                         let rec readRow(deltaSet: DeltaSet) =
                             async {
-                                let! readResult =
-                                    reader.ReadAsync() |> Async.AwaitTask
+                                let readResult = reader.Read()
 
                                 if readResult then
                                     let updateId = reader.GetInt32 0
@@ -437,8 +431,7 @@ type GossipSnapshotter(startToken: CancellationToken) =
                     readCommand.Parameters.AddWithValue lastSyncTimeStamp
                     |> ignore<NpgsqlParameter>
 
-                    let! reader =
-                        readCommand.ExecuteReaderAsync() |> Async.AwaitTask
+                    let reader = readCommand.ExecuteReader()
 
                     let mutable previousShortChannelId =
                         ShortChannelId.FromUInt64 UInt64.MaxValue
@@ -448,8 +441,7 @@ type GossipSnapshotter(startToken: CancellationToken) =
                     if reader.HasRows then
                         let rec readRow(deltaSet: DeltaSet) =
                             async {
-                                let! readResult =
-                                    reader.ReadAsync() |> Async.AwaitTask
+                                let readResult = reader.Read()
 
                                 if readResult then
                                     let updateId = reader.GetInt32 0
@@ -1188,8 +1180,9 @@ type GossipSnapshotter(startToken: CancellationToken) =
 
                         Console.WriteLine(
                             sprintf
-                                "Sleeping until next snapshot capture: %is"
-                                timeUntilNextDay.Seconds
+                                "Snapshotter[%s]: sleeping until next snapshot capture: %fs"
+                                (DateTime.UtcNow.ToString())
+                                timeUntilNextDay.TotalSeconds
                         )
 
                         // sleep until next day
