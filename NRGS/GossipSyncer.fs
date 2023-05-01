@@ -90,7 +90,7 @@ type internal GossipSyncer
             let! initialNode =
                 match initialNode with
                 | Ok node -> node.SendMsg gossipTimeStampFilter
-                | Error e -> failwith "sendinng gossip timestamp filter failed."
+                | Error e -> failwith "sending gossip timestamp filter failed."
 
             let rec processMessages(node: PeerNode) : Async<PeerNode> =
                 async {

@@ -1090,24 +1090,24 @@ type GossipSnapshotter(startToken: CancellationToken) =
         async {
             do! startToken.WaitHandle |> Async.AwaitWaitHandle |> Async.Ignore
 
-            let snapshotSyncDayFactors =
-                [
-                    Int32.MaxValue
-                    1
-                    2
-                    3
-                    4
-                    5
-                    6
-                    7
-                    14
-                    21
-                ]
-
             let rec snapshot() =
                 async {
                     try
                         let snapshotGenerationTimestamp = DateTime.UtcNow
+
+                        let snapshotSyncDayFactors =
+                            [
+                                1
+                                2
+                                3
+                                4
+                                5
+                                6
+                                7
+                                14
+                                21
+                                Int32.MaxValue
+                            ]
 
                         let referenceTimestamp =
                             snapshotGenerationTimestamp.Date
@@ -1135,13 +1135,19 @@ type GossipSnapshotter(startToken: CancellationToken) =
                                 factor, timestamp
                             )
 
-                        let mutable snapshotFilenamesByDayRange =
-                            list<int * string>.Empty
+                        let batch = dataSource.CreateBatch()
+
+                        batch.BatchCommands.Add(
+                            batch.CreateBatchCommand(
+                                CommandText = "DELETE FROM snapshots"
+                            )
+                        )
 
                         //WARNING: don't try to parallelize this, it chews memory.
                         for (dayRange, currentLastSyncTimestamp) in
                             snapshotSyncTimestamps do
                             let stopWatch = Stopwatch()
+
                             stopWatch.Start()
 
                             let! snapshot =
@@ -1149,28 +1155,47 @@ type GossipSnapshotter(startToken: CancellationToken) =
                                     currentLastSyncTimestamp
                                     true
 
-                            let fileName =
-                                sprintf
-                                    "snapshot__calculated-at-%i__range-%i-days__previous-sync-%i.lngossip"
-                                    (DateTimeUtils.ToUnixTimestamp
-                                        referenceTimestamp)
-                                    dayRange
-                                    (DateTimeUtils.ToUnixTimestamp
-                                        currentLastSyncTimestamp)
-
-                            File.WriteAllBytes(fileName, snapshot)
-
                             stopWatch.Stop()
 
                             Console.WriteLine(
                                 sprintf
-                                    "Snapshot saved, it took %f seconds to create it"
+                                    "Snapshot creation took %f seconds to create it"
                                     stopWatch.Elapsed.TotalSeconds
                             )
 
-                            snapshotFilenamesByDayRange <-
-                                snapshotFilenamesByDayRange
-                                @ List.singleton(dayRange, fileName)
+                            let batchCommand = batch.CreateBatchCommand()
+
+                            batchCommand.CommandText <-
+                                "INSERT INTO snapshots(\"referenceDateTime\", \"blob\", \"dayRange\", \"lastSyncTimestamp\") VALUES ($1,$2,$3,$4)"
+
+                            batchCommand.Parameters.Add(
+                                NpgsqlParameter(Value = referenceTimestamp)
+                            )
+                            |> ignore
+
+                            batchCommand.Parameters.Add(
+                                NpgsqlParameter(Value = snapshot)
+                            )
+                            |> ignore
+
+                            batchCommand.Parameters.Add(
+                                NpgsqlParameter(Value = dayRange)
+                            )
+                            |> ignore
+
+                            batchCommand.Parameters.Add(
+                                NpgsqlParameter(
+                                    Value = currentLastSyncTimestamp
+                                )
+                            )
+                            |> ignore
+
+                            batch.BatchCommands.Add(batchCommand)
+
+                        do!
+                            batch.ExecuteNonQueryAsync()
+                            |> Async.AwaitTask
+                            |> Async.Ignore
 
                         // constructing the snapshots may have taken a while
                         let nextSnapshot = DateTime.UtcNow.Date.AddDays 1

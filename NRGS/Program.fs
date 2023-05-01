@@ -27,7 +27,7 @@ module Program =
                     NodeIdentifier.TcpEndPoint(
                         NodeEndPoint.Parse
                             Currency.BTC
-                            "035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc226@170.75.163.209:9735"
+                            "02f1a8c87607f415c8f22c00593002775941dea48869ce23096af27b0cfdcc0b69@52.13.118.208:9735"
                     ),
                     toVerify
                 )

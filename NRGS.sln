@@ -9,6 +9,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "geewallet", "geewallet", "{
 EndProject
 Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "GWallet.Backend", "geewallet\src\GWallet.Backend\GWallet.Backend.fsproj", "{96F9B3E5-11F8-4F5F-AADC-51D0D995B3D2}"
 EndProject
+Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "NRGS.Server", "NRGS.Server\NRGS.Server.fsproj", "{E3F60176-D456-4E9C-A9FD-3C38421EDF6D}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -23,6 +25,10 @@ Global
 		{96F9B3E5-11F8-4F5F-AADC-51D0D995B3D2}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{96F9B3E5-11F8-4F5F-AADC-51D0D995B3D2}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{96F9B3E5-11F8-4F5F-AADC-51D0D995B3D2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E3F60176-D456-4E9C-A9FD-3C38421EDF6D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E3F60176-D456-4E9C-A9FD-3C38421EDF6D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E3F60176-D456-4E9C-A9FD-3C38421EDF6D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E3F60176-D456-4E9C-A9FD-3C38421EDF6D}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
