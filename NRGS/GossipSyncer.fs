@@ -100,7 +100,13 @@ type internal GossipSyncer
                                 return
                                     raise <| RoutingQueryException(e.ToString())
                             | Ok
-                                (newState, (:? ReplyChannelRangeMsg as replyChannelRange), _bytes) ->
+                                (
+                                    newState,
+                                    (
+                                        :? ReplyChannelRangeMsg as replyChannelRange
+                                    ),
+                                    _bytes
+                                ) ->
                                 let node =
                                     { node with
                                         MsgStream = newState

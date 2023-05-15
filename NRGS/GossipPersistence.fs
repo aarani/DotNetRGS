@@ -12,6 +12,7 @@ open System.Threading
 type internal GossipPersistence
     (
         verifiedMsgHandler: BufferBlock<Message>,
+        graph: NetworkGraph,
         notifySnapshotter: CancellationTokenSource
     ) =
 
@@ -25,10 +26,17 @@ type internal GossipPersistence
 
             use dataSource = NpgsqlDataSource.Create(connectionString)
 
+            let mutable lastGraphSaveTime = DateTime.MinValue
+            let graphSaveInterval = TimeSpan.FromMinutes 10.
+
             while true do
                 let! msg =
                     verifiedMsgHandler.ReceiveAsync cancelToken
                     |> Async.AwaitTask
+                    
+                if lastGraphSaveTime < DateTime.UtcNow - graphSaveInterval then
+                    graph.Save()
+                    lastGraphSaveTime <- DateTime.UtcNow
 
                 match msg with
                 | RoutingMsg(:? ChannelAnnouncementMsg as channelAnn, bytes) ->
@@ -56,36 +64,39 @@ type internal GossipPersistence
                             (channelAnn.Contents.ShortChannelId.ToUInt64())
                     )
 
+                    graph.AddChannel channelAnn.Contents
                 | RoutingMsg(:? ChannelUpdateMsg as updateMsg, bytes) ->
-                    let scid =
-                        updateMsg.Contents.ShortChannelId.ToUInt64() |> int64
+                    if graph.AddChannelUpdate updateMsg.Contents then
+                        let scid =
+                            updateMsg.Contents.ShortChannelId.ToUInt64() |> int64
 
-                    let timestamp = updateMsg.Contents.Timestamp |> int64
+                        let timestamp = updateMsg.Contents.Timestamp |> int64
 
-                    let direction =
-                        (updateMsg.Contents.ChannelFlags &&& 1uy) = 1uy
+                        let direction =
+                            (updateMsg.Contents.ChannelFlags &&& 1uy) = 1uy
 
-                    let disable =
-                        (updateMsg.Contents.ChannelFlags &&& 2uy) > 0uy
+                        let disable =
+                            (updateMsg.Contents.ChannelFlags &&& 2uy) > 0uy
 
-                    let cltvExpiryDelta =
-                        updateMsg.Contents.CLTVExpiryDelta.Value |> int
+                        let cltvExpiryDelta =
+                            updateMsg.Contents.CLTVExpiryDelta.Value |> int
 
-                    let htlcMinimumMsat =
-                        updateMsg.Contents.HTLCMinimumMSat.MilliSatoshi |> int64
+                        let htlcMinimumMsat =
+                            updateMsg.Contents.HTLCMinimumMSat.MilliSatoshi |> int64
 
-                    let feeBaseMsat =
-                        updateMsg.Contents.FeeBaseMSat.MilliSatoshi |> int
+                        let feeBaseMsat =
+                            updateMsg.Contents.FeeBaseMSat.MilliSatoshi |> int
 
-                    let feeProportionalMillionths =
-                        updateMsg.Contents.FeeProportionalMillionths |> int
+                        let feeProportionalMillionths =
+                            updateMsg.Contents.FeeProportionalMillionths |> int
 
-                    let htlcMaximumMsat =
-                        updateMsg.Contents.HTLCMaximumMSat.Value.MilliSatoshi |> int64
+                        let htlcMaximumMsat =
+                            updateMsg.Contents.HTLCMaximumMSat.Value.MilliSatoshi
+                            |> int64
 
-                    let sqlCommand =
-                        dataSource.CreateCommand(
-                            """
+                        let sqlCommand =
+                            dataSource.CreateCommand(
+                                """
 INSERT INTO channel_updates (
 	short_channel_id,
 	timestamp, 
@@ -99,55 +110,56 @@ INSERT INTO channel_updates (
 	htlc_maximum_msat,
 	blob_signed
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)  ON CONFLICT DO NOTHING
-                        """
+                            """
+                            )
+
+                        sqlCommand.Parameters.AddWithValue scid
+                        |> ignore<NpgsqlParameter>
+
+                        sqlCommand.Parameters.AddWithValue timestamp
+                        |> ignore<NpgsqlParameter>
+
+                        sqlCommand.Parameters.AddWithValue(
+                            int16 updateMsg.Contents.ChannelFlags
                         )
+                        |> ignore<NpgsqlParameter>
 
-                    sqlCommand.Parameters.AddWithValue scid
-                    |> ignore<NpgsqlParameter>
+                        sqlCommand.Parameters.AddWithValue direction
+                        |> ignore<NpgsqlParameter>
 
-                    sqlCommand.Parameters.AddWithValue timestamp
-                    |> ignore<NpgsqlParameter>
+                        sqlCommand.Parameters.AddWithValue disable
+                        |> ignore<NpgsqlParameter>
 
-                    sqlCommand.Parameters.AddWithValue(
-                        int16 updateMsg.Contents.ChannelFlags
-                    )
-                    |> ignore<NpgsqlParameter>
+                        sqlCommand.Parameters.AddWithValue cltvExpiryDelta
+                        |> ignore<NpgsqlParameter>
 
-                    sqlCommand.Parameters.AddWithValue direction
-                    |> ignore<NpgsqlParameter>
+                        sqlCommand.Parameters.AddWithValue htlcMinimumMsat
+                        |> ignore<NpgsqlParameter>
 
-                    sqlCommand.Parameters.AddWithValue disable
-                    |> ignore<NpgsqlParameter>
+                        sqlCommand.Parameters.AddWithValue feeBaseMsat
+                        |> ignore<NpgsqlParameter>
 
-                    sqlCommand.Parameters.AddWithValue cltvExpiryDelta
-                    |> ignore<NpgsqlParameter>
+                        sqlCommand.Parameters.AddWithValue feeProportionalMillionths
+                        |> ignore<NpgsqlParameter>
 
-                    sqlCommand.Parameters.AddWithValue htlcMinimumMsat
-                    |> ignore<NpgsqlParameter>
+                        sqlCommand.Parameters.AddWithValue htlcMaximumMsat
+                        |> ignore<NpgsqlParameter>
 
-                    sqlCommand.Parameters.AddWithValue feeBaseMsat
-                    |> ignore<NpgsqlParameter>
+                        sqlCommand.Parameters.AddWithValue bytes
+                        |> ignore<NpgsqlParameter>
 
-                    sqlCommand.Parameters.AddWithValue feeProportionalMillionths
-                    |> ignore<NpgsqlParameter>
+                        do!
+                            sqlCommand.ExecuteNonQueryAsync()
+                            |> Async.AwaitTask
+                            |> Async.Ignore
 
-                    sqlCommand.Parameters.AddWithValue htlcMaximumMsat
-                    |> ignore<NpgsqlParameter>
-
-                    sqlCommand.Parameters.AddWithValue bytes
-                    |> ignore<NpgsqlParameter>
-
-                    do!
-                        sqlCommand.ExecuteNonQueryAsync()
-                        |> Async.AwaitTask
-                        |> Async.Ignore
-
-                    Console.WriteLine(
-                        sprintf
-                            "Added update for channel #%i"
-                            (updateMsg.Contents.ShortChannelId.ToUInt64())
-                    )
+                        Console.WriteLine(
+                            sprintf
+                                "Added update for channel #%i"
+                                (updateMsg.Contents.ShortChannelId.ToUInt64())
+                        )
                 | FinishedInitialSync ->
+                    graph.Save()
                     Console.WriteLine(
                         "Finished persisting initial sync, notifying snapshotter..."
                     )
