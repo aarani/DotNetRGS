@@ -10,6 +10,7 @@
     <Compile Include="Utils\HistogramUtil.fs" />
     <Compile Include="Utils\FSharpUtil.fs" />
     <Compile Include="Utils\DateTimeUtils.fs" />
+    <Compile Include="NetworkGraph.fs" />
     <Compile Include="Message.fs" />
     <Compile Include="GossipSnapshotter.fs" />
     <Compile Include="GossipPersistence.fs" />

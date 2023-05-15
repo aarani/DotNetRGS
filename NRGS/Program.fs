@@ -15,6 +15,8 @@ module Program =
     [<EntryPoint>]
     let main argv =
         async {
+            let graph = NetworkGraph()
+
             let blockOption = DataflowBlockOptions()
 
             let toVerify = BufferBlock<Message> blockOption
@@ -32,9 +34,9 @@ module Program =
                     toVerify
                 )
 
-            let verifier1 = GossipVerifier(toVerify, toHandle)
+            let verifier1 = GossipVerifier(toVerify, toHandle, graph)
 
-            let persistence = GossipPersistence(toHandle, snapshotStartSource)
+            let persistence = GossipPersistence(toHandle, graph, snapshotStartSource)
 
             let snapshotter = GossipSnapshotter snapshotStartSource.Token
 
