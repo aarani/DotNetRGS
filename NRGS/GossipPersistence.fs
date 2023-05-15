@@ -81,10 +81,7 @@ type internal GossipPersistence
                         updateMsg.Contents.FeeProportionalMillionths |> int
 
                     let htlcMaximumMsat =
-                        match updateMsg.Contents.HTLCMaximumMSat with
-                        | Some maxMsat -> maxMsat.MilliSatoshi
-                        | None -> 0
-                        |> int64
+                        updateMsg.Contents.HTLCMaximumMSat.Value.MilliSatoshi |> int64
 
                     let sqlCommand =
                         dataSource.CreateCommand(

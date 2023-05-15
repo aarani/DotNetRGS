@@ -801,7 +801,7 @@ type GossipSnapshotter(startToken: CancellationToken) =
         use memStream = new MemoryStream()
         use writerStream = new LightningWriterStream(memStream)
 
-        let features = announcement.Features.ToByteArray()
+        let features = announcement.FeatureBitsArray
 
         writerStream.WriteWithLen features
 

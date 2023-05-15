@@ -97,12 +97,13 @@ type internal GossipVerifier
                         |> Async.AwaitTask
                         |> Async.Ignore
 #endif
-                | RoutingMsg(:? ChannelUpdateMsg as _updateMsg, _bytes) ->
+                | RoutingMsg(:? ChannelUpdateMsg as updateMsg, _bytes) ->
                     //TODO: verify msg signature
-                    do!
-                        verifiedMsgHandler.SendAsync msg
-                        |> Async.AwaitTask
-                        |> Async.Ignore
+                    if updateMsg.Contents.HTLCMaximumMSat.IsSome then
+                        do!
+                            verifiedMsgHandler.SendAsync msg
+                            |> Async.AwaitTask
+                            |> Async.Ignore
                 | _ ->
                     // I don't know this, passing it along
                     do!

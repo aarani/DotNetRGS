@@ -8,11 +8,9 @@ open DotNetLightning.Serialization.Msgs
 open DotNetLightning.Utils
 open ResultUtils.Portability
 open GWallet.Backend
-open GWallet.Backend.FSharpUtil.AsyncExtensions
 open GWallet.Backend.FSharpUtil.ReflectionlessPrint
 open GWallet.Backend.UtxoCoin.Lightning
 open NBitcoin
-open Newtonsoft.Json
 
 open NRGS.Utils
 
@@ -29,8 +27,6 @@ type internal GossipSyncer
         toVerifyMsgHandler: BufferBlock<Message>
     ) =
 
-    let msgCount = ref 0L
-
     member __.Download() =
         async {
             let! cancelToken = Async.CancellationToken
@@ -46,177 +42,287 @@ type internal GossipSyncer
                     Money.Zero
                     ConnectionPurpose.Routing
 
-            let firstTimestamp =
-                let twoWeeksAgoUnixTime =
-                    DateTimeUtils.ToUnixTimestamp(
-                        DateTime.Now - TimeSpan.FromDays(14.0)
-                    )
+            let initialNode =
+                match initialNode with
+                | Ok node -> node
+                | Error e -> failwith "connecting to peer failed"
 
-                if
-                    File.Exists
-                        (sprintf "syncState-%s.json" (peer.NodeId.Value.ToHex()))
-                then
-                    let syncState =
-                        File.ReadAllText(
-                            sprintf
-                                "syncState-%s.json"
-                                (peer.NodeId.Value.ToHex())
-                        )
-                        |> JsonConvert.DeserializeObject<SyncState>
+            let chainHash = Network.Main.GenesisHash
 
-                    let lastSyncUnixTime =
-                        DateTimeUtils.ToUnixTimestamp(
-                            syncState.LastSyncTimestamp.AddHours(
-#if DEBUG
-                                0
-#else
-                                -5
-#endif
-                            )
-                        )
+            let recvMsg msgStream =
+                async {
+                    let! recvBytesRes = msgStream.TransportStream.RecvBytes()
 
-                    Math.Max(lastSyncUnixTime, twoWeeksAgoUnixTime)
-                else
-                    twoWeeksAgoUnixTime
-
-            let gossipTimeStampFilter =
-                {
-                    GossipTimestampFilterMsg.ChainHash =
-                        Network.Main.GenesisHash
-                    FirstTimestamp = firstTimestamp
-                    TimestampRange = UInt32.MaxValue
+                    match recvBytesRes with
+                    | Error recvBytesError ->
+                        return Error <| RecvBytes recvBytesError
+                    | Ok(transportStream, bytes) ->
+                        match LightningMsg.fromBytes bytes with
+                        | Error msgError ->
+                            return Error <| DeserializeMsg msgError
+                        | Ok msg ->
+                            return
+                                Ok(
+                                    { msgStream with
+                                        TransportStream = transportStream
+                                    },
+                                    msg,
+                                    bytes
+                                )
                 }
 
-            let! initialNode =
-                match initialNode with
-                | Ok node -> node.SendMsg gossipTimeStampFilter
-                | Error e -> failwith "sending gossip timestamp filter failed."
-
-            let rec processMessages(node: PeerNode) : Async<PeerNode> =
+            let doInitialSync(node: PeerNode) : Async<PeerNode> =
                 async {
-                    cancelToken.ThrowIfCancellationRequested()
+                    let firstBlocknum = 0u
+                    let numberOfBlocks = 0xffffffffu
 
-                    let recvMsg msgStream =
-                        async {
-                            let! recvBytesRes =
-                                msgStream.TransportStream.RecvBytes()
-
-                            match recvBytesRes with
-                            | Error recvBytesError ->
-                                return Error <| RecvBytes recvBytesError
-                            | Ok(transportStream, bytes) ->
-                                match LightningMsg.fromBytes bytes with
-                                | Error msgError ->
-                                    return Error <| DeserializeMsg msgError
-                                | Ok msg ->
-                                    return
-                                        Ok(
-                                            { msgStream with
-                                                TransportStream =
-                                                    transportStream
-                                            },
-                                            msg,
-                                            bytes
-                                        )
+                    let queryMsg =
+                        {
+                            QueryChannelRangeMsg.ChainHash = chainHash
+                            FirstBlockNum = BlockHeight firstBlocknum
+                            NumberOfBlocks = numberOfBlocks
+                            TLVs = [||]
                         }
 
-                    let! response = recvMsg node.MsgStream
+                    // step 1: send query_channel_range, read all replies and collect short channel ids from them
+                    let! node = node.SendMsg queryMsg
 
-                    match response with
-                    | Error e -> return failwithf "RecvMsg failed, error = %A" e
-                    | Ok(newState, (:? IRoutingMsg as msg), bytes) ->
-                        System.Threading.Interlocked.Increment msgCount
-                        |> ignore<int64>
+                    let shortChannelIds = ResizeArray<ShortChannelId>()
 
-                        toVerifyMsgHandler.SendAsync(
-                            RoutingMsg(msg, bytes),
-                            cancelToken
-                        )
-                        |> ignore
+                    let rec queryShortChannelIds
+                        (node: PeerNode)
+                        : Async<PeerNode> =
+                        async {
+                            let! response = recvMsg node.MsgStream
 
-                        return!
-                            processMessages
-                                { node with
-                                    MsgStream = newState
-                                }
-                    | Ok(newState, (:? PingMsg as pingMsg), _) ->
-                        let! msgStreamAfterPongSent =
-                            newState.SendMsg
+                            match response with
+                            | Error e ->
+                                return
+                                    raise <| RoutingQueryException(e.ToString())
+                            | Ok
+                                (newState, (:? ReplyChannelRangeMsg as replyChannelRange), _bytes) ->
+                                let node =
+                                    { node with
+                                        MsgStream = newState
+                                    }
+
+                                shortChannelIds.AddRange
+                                    replyChannelRange.ShortIds
+
+                                if replyChannelRange.Complete then
+                                    return node
+                                else
+                                    return! queryShortChannelIds node
+                            | Ok(newState, msg, _bytes) ->
+                                // ignore all other messages
+                                let logMsg =
+                                    SPrintF1
+                                        "Received unexpected message while processing reply_channel_range messages:\n %A"
+                                        msg
+
+                                Infrastructure.LogDebug logMsg
+
+                                return!
+                                    queryShortChannelIds
+                                        { node with
+                                            MsgStream = newState
+                                        }
+                        }
+
+                    let! node = queryShortChannelIds node
+
+                    let batchSize = 1000
+
+                    let batches =
+                        shortChannelIds
+                        |> Seq.chunkBySize batchSize
+                        |> Collections.Generic.Queue
+
+                    // step 2: split shortChannelIds into batches and for each batch:
+                    // - send query_short_channel_ids
+                    // - receive routing messages and add them to result until we get reply_short_channel_ids_end
+                    let rec processMessages(node: PeerNode) : Async<PeerNode> =
+                        async {
+                            let! response = recvMsg node.MsgStream
+
+                            match response with
+                            | Error e ->
+                                return
+                                    raise <| RoutingQueryException(e.ToString())
+                            | Ok(newState, (:? IRoutingMsg as msg), bytes) ->
+                                let node =
+                                    { node with
+                                        MsgStream = newState
+                                    }
+
+                                match msg with
+                                | :? ReplyShortChannelIdsEndMsg as _channelIdsEnd ->
+                                    if batches.Count = 0 then
+                                        return node // end processing
+                                    else
+                                        return! sendNextBatch node
+                                | :? ChannelAnnouncementMsg
+                                | :? ChannelUpdateMsg ->
+                                    do!
+                                        toVerifyMsgHandler.SendAsync(
+                                            RoutingMsg(msg, bytes),
+                                            cancelToken
+                                        )
+                                        |> Async.AwaitTask
+                                        |> Async.Ignore
+
+                                    return! processMessages node
+                                | _ ->
+                                    //Routing msgs we don't care about
+                                    return! processMessages node
+                            | Ok(newState, (:? PingMsg as pingMsg), _) ->
+                                let! msgStreamAfterPongSent =
+                                    newState.SendMsg
+                                        {
+                                            PongMsg.BytesLen = pingMsg.PongLen
+                                        }
+
+                                return!
+                                    processMessages
+                                        { node with
+                                            MsgStream = msgStreamAfterPongSent
+                                        }
+                            | Ok(newState, msg, _bytes) ->
+                                let logMsg =
+                                    SPrintF1
+                                        "Received unexpected message while processing routing messages:\n %A"
+                                        msg
+
+                                Infrastructure.LogDebug logMsg
+
+                                return!
+                                    processMessages
+                                        { node with
+                                            MsgStream = newState
+                                        }
+                        }
+
+                    and sendNextBatch(node: PeerNode) : Async<PeerNode> =
+                        async {
+                            let queryShortIdsMsg =
                                 {
-                                    PongMsg.BytesLen = pingMsg.PongLen
+                                    QueryShortChannelIdsMsg.ChainHash =
+                                        chainHash
+                                    ShortIdsEncodingType =
+                                        EncodingType.SortedPlain
+                                    ShortIds = batches.Dequeue()
+                                    TLVs = [||]
                                 }
 
-                        return!
-                            processMessages
-                                { node with
-                                    MsgStream = msgStreamAfterPongSent
-                                }
-                    | Ok(newState, msg, _) ->
-                        // ignore all other messages
-                        let logMsg =
-                            SPrintF1
-                                "Received unexpected message while processing routing messages:\n %A"
-                                msg
+                            let! node = node.SendMsg queryShortIdsMsg
+                            return! processMessages node
+                        }
 
-                        Infrastructure.LogDebug logMsg
-
-                        return!
-                            processMessages
-                                { node with
-                                    MsgStream = newState
-                                }
+                    return! sendNextBatch node
                 }
 
-            do! processMessages initialNode |> Async.Ignore
-        }
-
-    member __.LookForInitialSyncFinish() =
-        async {
-            let mutable previousCounter = 0L
-            let mutable i = 0UL
-
-            let rec lookForFinishedSync() =
+            let doGossipTimestampFilterSync(node: PeerNode) =
                 async {
-                    i <- i + 1UL
-                    do! Async.Sleep(TimeSpan.FromSeconds 5.)
+                    let firstTimestamp =
+                        DateTimeUtils.ToUnixTimestamp DateTime.Now
 
-                    let newMsgCount = msgCount.Value
-                    let delta = newMsgCount - previousCounter
+                    let gossipTimeStampFilter =
+                        {
+                            GossipTimestampFilterMsg.ChainHash =
+                                Network.Main.GenesisHash
+                            FirstTimestamp = firstTimestamp
+                            TimestampRange = UInt32.MaxValue
+                        }
 
-                    Console.WriteLine(
-                        sprintf
-                            "initial sync gossip count (iteration %i): %i (delta: %i)"
-                            i
-                            newMsgCount
-                            delta
-                    )
+                    let! node = node.SendMsg gossipTimeStampFilter
 
-                    if i > 2UL && delta < 50 && previousCounter <> 0 then
-                        Console.WriteLine("Initial sync finished")
+                    let rec processMessages(node: PeerNode) : Async<PeerNode> =
+                        async {
+                            cancelToken.ThrowIfCancellationRequested()
 
-                        let syncState =
-                            {
-                                LastSyncTimestamp = DateTime.UtcNow
-                            }
-                            |> JsonConvert.SerializeObject
+                            let recvMsg msgStream =
+                                async {
+                                    let! recvBytesRes =
+                                        msgStream.TransportStream.RecvBytes()
 
-                        File.WriteAllText(
-                            sprintf
-                                "syncState-%s.json"
-                                (peer.NodeId.Value.ToHex()),
-                            syncState
-                        )
+                                    match recvBytesRes with
+                                    | Error recvBytesError ->
+                                        return Error <| RecvBytes recvBytesError
+                                    | Ok(transportStream, bytes) ->
+                                        match LightningMsg.fromBytes bytes with
+                                        | Error msgError ->
+                                            return
+                                                Error <| DeserializeMsg msgError
+                                        | Ok msg ->
+                                            return
+                                                Ok(
+                                                    { msgStream with
+                                                        TransportStream =
+                                                            transportStream
+                                                    },
+                                                    msg,
+                                                    bytes
+                                                )
+                                }
 
-                        return!
-                            toVerifyMsgHandler.SendAsync(FinishedInitialSync)
-                            |> Async.AwaitTask
-                            |> Async.Ignore
-                    else
-                        previousCounter <- newMsgCount
-                        do! lookForFinishedSync()
+                            let! response = recvMsg node.MsgStream
+
+                            match response with
+                            | Error e ->
+                                return failwithf "RecvMsg failed, error = %A" e
+                            | Ok(newState, (:? IRoutingMsg as msg), bytes) ->
+                                do!
+                                    toVerifyMsgHandler.SendAsync(
+                                        RoutingMsg(msg, bytes),
+                                        cancelToken
+                                    )
+                                    |> Async.AwaitTask
+                                    |> Async.Ignore
+
+                                return!
+                                    processMessages
+                                        { node with
+                                            MsgStream = newState
+                                        }
+                            | Ok(newState, (:? PingMsg as pingMsg), _) ->
+                                let! msgStreamAfterPongSent =
+                                    newState.SendMsg
+                                        {
+                                            PongMsg.BytesLen = pingMsg.PongLen
+                                        }
+
+                                return!
+                                    processMessages
+                                        { node with
+                                            MsgStream = msgStreamAfterPongSent
+                                        }
+                            | Ok(newState, msg, _) ->
+                                // ignore all other messages
+                                let logMsg =
+                                    SPrintF1
+                                        "Received unexpected message while processing routing messages:\n %A"
+                                        msg
+
+                                Infrastructure.LogDebug logMsg
+
+                                return!
+                                    processMessages
+                                        { node with
+                                            MsgStream = newState
+                                        }
+                        }
+
+                    return! processMessages node
                 }
 
-            do! lookForFinishedSync()
+            let! node = doInitialSync initialNode
+
+            do!
+                toVerifyMsgHandler.SendAsync(FinishedInitialSync)
+                |> Async.AwaitTask
+                |> Async.Ignore
+
+            do! doGossipTimestampFilterSync node |> Async.Ignore
         }
 
     member self.Start() =
@@ -224,9 +330,5 @@ type internal GossipSyncer
             let! cancelToken = Async.CancellationToken
             cancelToken.ThrowIfCancellationRequested()
 
-            do!
-                MixedParallel2
-                    (self.Download())
-                    (self.LookForInitialSyncFinish())
-                |> Async.Ignore
+            return! self.Download()
         }
