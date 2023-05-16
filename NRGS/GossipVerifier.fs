@@ -24,7 +24,7 @@ type internal GossipVerifier
             cancelToken.ThrowIfCancellationRequested()
 
             let network = UtxoCoin.Account.GetNetwork Currency.BTC
-            
+
             while true do
                 let! msg =
                     toVerifyMsgHandler.ReceiveAsync cancelToken
@@ -32,7 +32,7 @@ type internal GossipVerifier
 
                 match msg with
                 | RoutingMsg(:? ChannelAnnouncementMsg as channelAnn, _bytes) ->
-                    let saveChannelAnn () =
+                    let saveChannelAnn() =
                         verifiedMsgHandler.SendAsync msg
                         |> Async.AwaitTask
                         |> Async.Ignore
@@ -74,12 +74,15 @@ type internal GossipVerifier
                                 (ElectrumClient.GetBlockchainTransaction txId)
                                 None
 
-                        let transaction = Transaction.Parse(transaction, network)
+                        let transaction =
+                            Transaction.Parse(transaction, network)
 
                         let redeem =
                             Scripts.funding
-                                (FundingPubKey channelAnn.Contents.BitcoinKey1.Value)
-                                (FundingPubKey channelAnn.Contents.BitcoinKey2.Value)
+                                (FundingPubKey
+                                    channelAnn.Contents.BitcoinKey1.Value)
+                                (FundingPubKey
+                                    channelAnn.Contents.BitcoinKey2.Value)
 
                         let outputOpt =
                             transaction.Outputs |> Seq.tryItem(int txOutIndex)

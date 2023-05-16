@@ -36,7 +36,8 @@ module Program =
 
             let verifier1 = GossipVerifier(toVerify, toHandle, graph)
 
-            let persistence = GossipPersistence(toHandle, graph, snapshotStartSource)
+            let persistence =
+                GossipPersistence(toHandle, graph, snapshotStartSource)
 
             let snapshotter = GossipSnapshotter snapshotStartSource.Token
 

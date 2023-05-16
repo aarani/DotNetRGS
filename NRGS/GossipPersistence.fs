@@ -33,7 +33,7 @@ type internal GossipPersistence
                 let! msg =
                     verifiedMsgHandler.ReceiveAsync cancelToken
                     |> Async.AwaitTask
-                    
+
                 if lastGraphSaveTime < DateTime.UtcNow - graphSaveInterval then
                     graph.Save()
                     lastGraphSaveTime <- DateTime.UtcNow
@@ -68,7 +68,8 @@ type internal GossipPersistence
                 | RoutingMsg(:? ChannelUpdateMsg as updateMsg, bytes) ->
                     if graph.AddChannelUpdate updateMsg.Contents then
                         let scid =
-                            updateMsg.Contents.ShortChannelId.ToUInt64() |> int64
+                            updateMsg.Contents.ShortChannelId.ToUInt64()
+                            |> int64
 
                         let timestamp = updateMsg.Contents.Timestamp |> int64
 
@@ -82,7 +83,8 @@ type internal GossipPersistence
                             updateMsg.Contents.CLTVExpiryDelta.Value |> int
 
                         let htlcMinimumMsat =
-                            updateMsg.Contents.HTLCMinimumMSat.MilliSatoshi |> int64
+                            updateMsg.Contents.HTLCMinimumMSat.MilliSatoshi
+                            |> int64
 
                         let feeBaseMsat =
                             updateMsg.Contents.FeeBaseMSat.MilliSatoshi |> int
@@ -139,7 +141,8 @@ INSERT INTO channel_updates (
                         sqlCommand.Parameters.AddWithValue feeBaseMsat
                         |> ignore<NpgsqlParameter>
 
-                        sqlCommand.Parameters.AddWithValue feeProportionalMillionths
+                        sqlCommand.Parameters.AddWithValue
+                            feeProportionalMillionths
                         |> ignore<NpgsqlParameter>
 
                         sqlCommand.Parameters.AddWithValue htlcMaximumMsat
@@ -160,6 +163,7 @@ INSERT INTO channel_updates (
                         )
                 | FinishedInitialSync ->
                     graph.Save()
+
                     Console.WriteLine(
                         "Finished persisting initial sync, notifying snapshotter..."
                     )
