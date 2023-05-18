@@ -17,6 +17,7 @@ type ChannelInfo =
         NodeTwo: NodeId
         Forward: Option<UnsignedChannelUpdateMsg>
         Backward: Option<UnsignedChannelUpdateMsg>
+        AnnouncementReceivedTime: DateTime
     }
 
 type internal ShortChannelIdConverter() =
@@ -125,6 +126,7 @@ type NetworkGraph(dataDir: DirectoryInfo) =
                     NodeTwo = ann.NodeId2
                     Forward = None
                     Backward = None
+                    AnnouncementReceivedTime = DateTime.UtcNow
                 }
 
             match channels.TryGetValue ann.ShortChannelId with
@@ -202,10 +204,51 @@ type NetworkGraph(dataDir: DirectoryInfo) =
             finally
                 Monitor.Exit channelsLock
 
-    member __.Save() =
+    member private __.UnsafeRemoveStaleChannels() =
+        //We remove stale channel directional info two weeks after the last update, per BOLT 7's suggestion.
+        let minUpdateDateTime = DateTime.UtcNow.Subtract(TimeSpan.FromDays 14.)
+        let minUpdateTimestamp = DateTimeUtils.ToUnixTimestamp minUpdateDateTime
+
+        channels <-
+            channels
+            |> Map.toSeq
+            |> Seq.choose(fun (shortChannelId, info) ->
+                let info =
+                    if info.Forward.IsSome
+                       && info.Forward.Value.Timestamp < minUpdateTimestamp then
+                        { info with
+                            Forward = None
+                        }
+                    else
+                        info
+
+                let info =
+                    if info.Backward.IsSome
+                       && info.Backward.Value.Timestamp < minUpdateTimestamp then
+                        { info with
+                            Backward = None
+                        }
+                    else
+                        info
+
+                if info.Forward.IsNone && info.Backward.IsNone then
+                    // We check the announcement_received_time here to ensure we don't drop
+                    // announcements that we just received and are just waiting for our peer to send a
+                    // channel_update for.
+                    if info.AnnouncementReceivedTime < minUpdateDateTime then
+                        None
+                    else
+                        Some(shortChannelId, info)
+                else
+                    Some(shortChannelId, info)
+            )
+            |> Map.ofSeq
+
+    member self.Save() =
         Monitor.Enter channelsLock
 
         try
+            self.UnsafeRemoveStaleChannels()
             let channelsFile = Path.Combine(dataDir.FullName, "channels.json")
             let channelsList = channels |> Map.toList
 
