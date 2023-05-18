@@ -27,7 +27,9 @@ type internal GossipSyncer
         toVerifyMsgHandler: BufferBlock<Message>
     ) =
 
-    member __.Download() =
+    let mutable finishedInitialSync: bool = false
+
+    member private __.Download() =
         async {
             let! cancelToken = Async.CancellationToken
 
@@ -321,7 +323,16 @@ type internal GossipSyncer
                     return! processMessages node
                 }
 
-            let! node = doInitialSync initialNode
+            let! node =
+                // We don't want to do an entire initial sync everytime we reconnect
+                if not finishedInitialSync then
+                    doInitialSync initialNode
+                else
+                    async {
+                        return initialNode
+                    }
+
+            finishedInitialSync <- true
 
             do!
                 toVerifyMsgHandler.SendAsync(FinishedInitialSync)
@@ -331,10 +342,20 @@ type internal GossipSyncer
             do! doGossipTimestampFilterSync node |> Async.Ignore
         }
 
+    member self.DownloadWithReconnect() =
+        async {
+            try
+                do! self.Download()
+            with
+            | ex ->
+                Console.WriteLine(sprintf "Connection failed with the following ex:\n %A" ex)
+                return! self.DownloadWithReconnect()
+        }
+
     member self.Start() =
         async {
             let! cancelToken = Async.CancellationToken
             cancelToken.ThrowIfCancellationRequested()
 
-            return! self.Download()
+            return! self.DownloadWithReconnect()
         }
