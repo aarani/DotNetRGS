@@ -66,7 +66,7 @@ type internal GossipPersistence
 
                     graph.AddChannel channelAnn.Contents
                 | RoutingMsg(:? ChannelUpdateMsg as updateMsg, bytes) ->
-                    if graph.AddChannelUpdate updateMsg.Contents then
+                    if graph.AddChannelUpdate updateMsg then
                         let scid =
                             updateMsg.Contents.ShortChannelId.ToUInt64()
                             |> int64

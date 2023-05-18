@@ -141,17 +141,22 @@ type NetworkGraph(dataDir: DirectoryInfo) =
         finally
             Monitor.Exit channelsLock
 
-    member __.AddChannelUpdate(updateMsg: UnsignedChannelUpdateMsg) =
+    member __.AddChannelUpdate(signedUpdateMsg: ChannelUpdateMsg) =
+        let unsignedUpdateMsg = signedUpdateMsg.Contents
+
+        let updateMsgHash =
+            unsignedUpdateMsg.ToBytes() |> NBitcoin.Crypto.Hashes.DoubleSHA256
+
         let now = DateTimeUtils.ToUnixTimestamp DateTime.UtcNow
         let twoWeekInSeconds = TimeSpan.FromDays(14.).TotalSeconds |> uint32
         let dayInSeconds = TimeSpan.FromDays(1.).TotalSeconds |> uint32
 
-        if updateMsg.Timestamp < now - twoWeekInSeconds then
+        if unsignedUpdateMsg.Timestamp < now - twoWeekInSeconds then
             Console.WriteLine
                 "AddChannelUpdate: received channel update older than two weeks"
 
             false
-        elif updateMsg.Timestamp > now + dayInSeconds then
+        elif unsignedUpdateMsg.Timestamp > now + dayInSeconds then
             Console.WriteLine
                 "AddChannelUpdate: channel_update has a timestamp more than a day in the future"
 
@@ -160,9 +165,10 @@ type NetworkGraph(dataDir: DirectoryInfo) =
             Monitor.Enter channelsLock
 
             try
-                match channels.TryGetValue updateMsg.ShortChannelId with
+                match channels.TryGetValue unsignedUpdateMsg.ShortChannelId with
                 | true, channel ->
-                    let isForward = (updateMsg.ChannelFlags &&& 1uy) = 0uy
+                    let isForward =
+                        (unsignedUpdateMsg.ChannelFlags &&& 1uy) = 0uy
 
                     let getNewer
                         (previousValueOpt: Option<UnsignedChannelUpdateMsg>)
@@ -180,22 +186,50 @@ type NetworkGraph(dataDir: DirectoryInfo) =
                                 newValue
                         | None -> newValue
 
-                    let newChannel =
+                    // We have to do the signature verification here instead of GossipVerifier because we need the channel nodeIds
+                    let sigIsValid =
                         if isForward then
-                            { channel with
-                                Forward =
-                                    getNewer channel.Forward updateMsg |> Some
-                            }
+                            channel.NodeOne.Value.Verify(
+                                updateMsgHash,
+                                signedUpdateMsg.Signature.Value
+                            )
                         else
-                            { channel with
-                                Backward =
-                                    getNewer channel.Backward updateMsg |> Some
-                            }
+                            channel.NodeTwo.Value.Verify(
+                                updateMsgHash,
+                                signedUpdateMsg.Signature.Value
+                            )
 
-                    channels <-
-                        channels.Add(updateMsg.ShortChannelId, newChannel)
+                    if sigIsValid then
+                        let newChannel =
+                            if isForward then
+                                { channel with
+                                    Forward =
+                                        getNewer
+                                            channel.Forward
+                                            unsignedUpdateMsg
+                                        |> Some
+                                }
+                            else
+                                { channel with
+                                    Backward =
+                                        getNewer
+                                            channel.Backward
+                                            unsignedUpdateMsg
+                                        |> Some
+                                }
 
-                    channel <> newChannel
+                        channels <-
+                            channels.Add(
+                                unsignedUpdateMsg.ShortChannelId,
+                                newChannel
+                            )
+
+                        channel <> newChannel
+                    else
+                        Console.WriteLine
+                            "AddChannelUpdate: received updateMsg with invalid signature"
+
+                        false
                 | false, _ ->
                     Console.WriteLine
                         "AddChannelUpdate: received channel update for unknown channel"
