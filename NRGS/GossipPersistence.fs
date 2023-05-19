@@ -84,7 +84,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS channel_updates_key ON channel_updates (short_
                     lastGraphSaveTime <- DateTime.UtcNow
 
                 match msg with
-                | RoutingMsg(:? ChannelAnnouncementMsg as channelAnn, bytes) ->
+                | VerifiedChannelAnnouncement (channelAnn, capacityOpt, bytes) ->
                     let sqlCommand =
                         dataSource.CreateCommand(
                             "INSERT INTO channel_announcements (short_channel_id, announcement_signed) VALUES ($1, $2) ON CONFLICT (short_channel_id) DO NOTHING"
@@ -109,7 +109,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS channel_updates_key ON channel_updates (short_
                             (channelAnn.Contents.ShortChannelId.ToUInt64())
                     )
 
-                    graph.AddChannel channelAnn.Contents
+                    graph.AddChannel channelAnn.Contents capacityOpt
                 | RoutingMsg(:? ChannelUpdateMsg as updateMsg, bytes) ->
                     if graph.AddChannelUpdate updateMsg then
                         let scid =

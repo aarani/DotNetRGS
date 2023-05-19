@@ -31,9 +31,10 @@ type internal GossipVerifier
                     |> Async.AwaitTask
 
                 match msg with
-                | RoutingMsg(:? ChannelAnnouncementMsg as channelAnn, _bytes) ->
-                    let saveChannelAnn() =
-                        verifiedMsgHandler.SendAsync msg
+                | RoutingMsg(:? ChannelAnnouncementMsg as channelAnn, bytes) ->
+                    let saveChannelAnn(capacityOpt: Option<Money>) =
+                        VerifiedChannelAnnouncement(channelAnn, capacityOpt, bytes)
+                        |> verifiedMsgHandler.SendAsync
                         |> Async.AwaitTask
                         |> Async.Ignore
 
@@ -120,7 +121,7 @@ type internal GossipVerifier
                             | Some output when
                                 output.IsTo(redeem.WitHash :> IDestination)
                                 ->
-                                do! saveChannelAnn()
+                                do! saveChannelAnn(Some output.Value)
                             | Some _ ->
                                 Console.WriteLine
                                     "Channel announcement key didn't match on-chain script"
@@ -128,17 +129,16 @@ type internal GossipVerifier
                                 Console.WriteLine
                                     "Output index out of bounds in transaction"
 #else
-                            do! saveChannelAnn()
+                            do! saveChannelAnn None
 #endif
                     else
                         Console.WriteLine
                             "GossipVerifier: received channel ann with invalid signature"
                 | RoutingMsg(:? ChannelUpdateMsg as updateMsg, _bytes) ->
-                    if updateMsg.Contents.HTLCMaximumMSat.IsSome then
-                        do!
-                            verifiedMsgHandler.SendAsync msg
-                            |> Async.AwaitTask
-                            |> Async.Ignore
+                    do!
+                        verifiedMsgHandler.SendAsync msg
+                        |> Async.AwaitTask
+                        |> Async.Ignore
                 | _ ->
                     // I don't know this, passing it along
                     do!

@@ -6,6 +6,7 @@ open System.IO
 
 open DotNetLightning.Utils
 open DotNetLightning.Serialization.Msgs
+open NBitcoin
 open Newtonsoft.Json
 open GWallet.Backend
 
@@ -18,6 +19,7 @@ type ChannelInfo =
         Forward: Option<UnsignedChannelUpdateMsg>
         Backward: Option<UnsignedChannelUpdateMsg>
         AnnouncementReceivedTime: DateTime
+        Capacity: Option<Money>
     }
 
 type internal ShortChannelIdConverter() =
@@ -116,7 +118,7 @@ type NetworkGraph(dataDir: DirectoryInfo) =
         finally
             Monitor.Exit channelsLock
 
-    member __.AddChannel(ann: UnsignedChannelAnnouncementMsg) =
+    member __.AddChannel(ann: UnsignedChannelAnnouncementMsg) (capacityOpt: Option<Money>) =
         Monitor.Enter channelsLock
 
         try
@@ -127,6 +129,7 @@ type NetworkGraph(dataDir: DirectoryInfo) =
                     Forward = None
                     Backward = None
                     AnnouncementReceivedTime = DateTime.UtcNow
+                    Capacity = capacityOpt
                 }
 
             match channels.TryGetValue ann.ShortChannelId with
@@ -167,69 +170,81 @@ type NetworkGraph(dataDir: DirectoryInfo) =
             try
                 match channels.TryGetValue unsignedUpdateMsg.ShortChannelId with
                 | true, channel ->
-                    let isForward =
-                        (unsignedUpdateMsg.ChannelFlags &&& 1uy) = 0uy
+                    // HTLCMaximum should technically always be Some because we validate it
+                    // in GossipVerifier.
+                    // This code checks that if we have the capacity (we're in release mode and
+                    // we check the channel on-chain), it shouldn't be less than HtLCMaximumMSat.
+                    match (channel.Capacity, unsignedUpdateMsg.HTLCMaximumMSat) with
+                    | Some capacity, Some htlcMaximum when capacity.Satoshi < htlcMaximum.Satoshi ->
+                        Console.WriteLine "AddChannelUpdate: received channel update with htlc maximum more than the capacity"
+                        false
+                    | _, None ->
+                        Console.WriteLine "AddChannelUpdate: received channel update with no htlc maximum"
+                        false
+                    | _ ->
+                        let isForward =
+                            (unsignedUpdateMsg.ChannelFlags &&& 1uy) = 0uy
 
-                    let getNewer
-                        (previousValueOpt: Option<UnsignedChannelUpdateMsg>)
-                        (newValue: UnsignedChannelUpdateMsg)
-                        =
-                        match previousValueOpt with
-                        | Some previousValue ->
-                            if previousValue.Timestamp >= newValue.Timestamp then
-                                Console.WriteLine(
-                                    "AddChannelUpdate: Update older or same timestamp than last processed update"
+                        let getNewer
+                            (previousValueOpt: Option<UnsignedChannelUpdateMsg>)
+                            (newValue: UnsignedChannelUpdateMsg)
+                            =
+                            match previousValueOpt with
+                            | Some previousValue ->
+                                if previousValue.Timestamp >= newValue.Timestamp then
+                                    Console.WriteLine(
+                                        "AddChannelUpdate: Update older or same timestamp than last processed update"
+                                    )
+
+                                    previousValue
+                                else
+                                    newValue
+                            | None -> newValue
+
+                        // We have to do the signature verification here instead of GossipVerifier because we need the channel nodeIds
+                        let sigIsValid =
+                            if isForward then
+                                channel.NodeOne.Value.Verify(
+                                    updateMsgHash,
+                                    signedUpdateMsg.Signature.Value
+                                )
+                            else
+                                channel.NodeTwo.Value.Verify(
+                                    updateMsgHash,
+                                    signedUpdateMsg.Signature.Value
                                 )
 
-                                previousValue
-                            else
-                                newValue
-                        | None -> newValue
+                        if sigIsValid then
+                            let newChannel =
+                                if isForward then
+                                    { channel with
+                                        Forward =
+                                            getNewer
+                                                channel.Forward
+                                                unsignedUpdateMsg
+                                            |> Some
+                                    }
+                                else
+                                    { channel with
+                                        Backward =
+                                            getNewer
+                                                channel.Backward
+                                                unsignedUpdateMsg
+                                            |> Some
+                                    }
 
-                    // We have to do the signature verification here instead of GossipVerifier because we need the channel nodeIds
-                    let sigIsValid =
-                        if isForward then
-                            channel.NodeOne.Value.Verify(
-                                updateMsgHash,
-                                signedUpdateMsg.Signature.Value
-                            )
+                            channels <-
+                                channels.Add(
+                                    unsignedUpdateMsg.ShortChannelId,
+                                    newChannel
+                                )
+
+                            channel <> newChannel
                         else
-                            channel.NodeTwo.Value.Verify(
-                                updateMsgHash,
-                                signedUpdateMsg.Signature.Value
-                            )
+                            Console.WriteLine
+                                "AddChannelUpdate: received updateMsg with invalid signature"
 
-                    if sigIsValid then
-                        let newChannel =
-                            if isForward then
-                                { channel with
-                                    Forward =
-                                        getNewer
-                                            channel.Forward
-                                            unsignedUpdateMsg
-                                        |> Some
-                                }
-                            else
-                                { channel with
-                                    Backward =
-                                        getNewer
-                                            channel.Backward
-                                            unsignedUpdateMsg
-                                        |> Some
-                                }
-
-                        channels <-
-                            channels.Add(
-                                unsignedUpdateMsg.ShortChannelId,
-                                newChannel
-                            )
-
-                        channel <> newChannel
-                    else
-                        Console.WriteLine
-                            "AddChannelUpdate: received updateMsg with invalid signature"
-
-                        false
+                            false
                 | false, _ ->
                     Console.WriteLine
                         "AddChannelUpdate: received channel update for unknown channel"
