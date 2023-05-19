@@ -1,4 +1,4 @@
-﻿namespace NRGS
+﻿namespace DotNetRGS
 
 open System
 open System.Threading
@@ -42,7 +42,7 @@ module Program =
 
             let snapshotter = GossipSnapshotter snapshotStartSource.Token
 
-            Logger.Log "NRGS" "started"
+            Logger.Log "DotNetRGS" "started"
 
             do!
                 MixedParallel5

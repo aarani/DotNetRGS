@@ -1,6 +1,6 @@
 {
   "profiles": {
-    "NRGS.Server": {
+    "DotNetRGS.Server": {
       "commandName": "Project",
       "launchBrowser": true,
       "environmentVariables": {

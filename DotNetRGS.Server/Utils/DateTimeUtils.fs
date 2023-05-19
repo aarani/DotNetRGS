@@ -1,4 +1,4 @@
-﻿namespace NRGS.Utils
+﻿namespace DotNetRGS.Server.Utils
 
 open System
 

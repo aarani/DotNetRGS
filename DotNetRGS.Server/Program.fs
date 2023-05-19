@@ -1,4 +1,4 @@
-module NRGS.Server.App
+module DotNetRGS.Server.App
 
 open System
 open Microsoft.AspNetCore.Builder
@@ -11,7 +11,7 @@ open Microsoft.AspNetCore.Http
 open Giraffe
 open Npgsql
 
-open NRGS.Server.Utils
+open DotNetRGS.Server.Utils
 
 let dataSource =
     NpgsqlDataSource.Create(

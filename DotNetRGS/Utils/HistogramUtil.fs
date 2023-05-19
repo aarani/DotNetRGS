@@ -1,4 +1,4 @@
-﻿namespace NRGS.Utils
+﻿namespace DotNetRGS.Utils
 
 type Histogram<'T when 'T: comparison> = Map<'T, uint>
 

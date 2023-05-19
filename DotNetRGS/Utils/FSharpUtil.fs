@@ -1,4 +1,4 @@
-﻿namespace NRGS.Utils
+﻿namespace DotNetRGS.Utils
 
 module FSharpUtil =
     let UnwrapOption<'T> (opt: Option<'T>) (msg: string) : 'T =

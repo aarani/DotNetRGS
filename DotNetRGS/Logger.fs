@@ -1,4 +1,4 @@
-﻿namespace NRGS
+﻿namespace DotNetRGS
 
 open System
 

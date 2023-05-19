@@ -1,4 +1,4 @@
-﻿namespace NRGS
+﻿namespace DotNetRGS
 
 open System
 open System.IO
@@ -12,7 +12,7 @@ open GWallet.Backend.FSharpUtil.ReflectionlessPrint
 open GWallet.Backend.UtxoCoin.Lightning
 open NBitcoin
 
-open NRGS.Utils
+open DotNetRGS.Utils
 
 exception RoutingQueryException of string
 

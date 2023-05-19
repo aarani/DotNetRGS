@@ -1,4 +1,4 @@
-﻿namespace NRGS
+﻿namespace DotNetRGS
 
 open System
 open System.Threading
@@ -10,7 +10,7 @@ open NBitcoin
 open Newtonsoft.Json
 open GWallet.Backend
 
-open NRGS.Utils
+open DotNetRGS.Utils
 
 type ChannelInfo =
     {
@@ -100,7 +100,7 @@ type NetworkGraph(dataDir: DirectoryInfo) =
         let configPath =
             Environment.GetFolderPath Environment.SpecialFolder.ApplicationData
 
-        let path = Path.Combine(configPath, "nrgs") |> DirectoryInfo
+        let path = Path.Combine(configPath, "DotNetRGS") |> DirectoryInfo
         NetworkGraph path
 
     member __.ValidateChannelAnnouncement(ann: UnsignedChannelAnnouncementMsg) =

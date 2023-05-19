@@ -1,4 +1,4 @@
-﻿namespace NRGS
+﻿namespace DotNetRGS
 
 open System
 open System.IO
@@ -14,8 +14,8 @@ open ResultUtils.Portability
 
 open Npgsql
 
-open NRGS.Utils
-open NRGS.Utils.FSharpUtil
+open DotNetRGS.Utils
+open DotNetRGS.Utils.FSharpUtil
 open System.Diagnostics
 
 type MutatedProperties =
