@@ -26,6 +26,51 @@ type internal GossipPersistence
 
             use dataSource = NpgsqlDataSource.Create(connectionString)
 
+            let initializeCommand =
+                dataSource.CreateCommand(
+                    """
+CREATE TABLE IF NOT EXISTS snapshots
+(
+    id SERIAL PRIMARY KEY,
+    "referenceDateTime" timestamp NOT NULL DEFAULT NOW(),
+    blob bytea NOT NULL,
+    "dayRange" integer NOT NULL,
+    "lastSyncTimestamp" timestamp NOT NULL
+);
+CREATE TABLE IF NOT EXISTS channel_announcements (
+	id SERIAL PRIMARY KEY,
+	short_channel_id bigint NOT NULL UNIQUE,
+	announcement_signed BYTEA,
+	seen timestamp NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS channel_updates (
+	id SERIAL PRIMARY KEY,
+	short_channel_id bigint NOT NULL,
+	timestamp bigint NOT NULL,
+	channel_flags smallint NOT NULL,
+	direction boolean NOT NULL,
+	disable boolean NOT NULL,
+	cltv_expiry_delta integer NOT NULL,
+	htlc_minimum_msat bigint NOT NULL,
+	fee_base_msat integer NOT NULL,
+	fee_proportional_millionths integer NOT NULL,
+	htlc_maximum_msat bigint NOT NULL,
+	blob_signed BYTEA NOT NULL,
+	seen timestamp NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS channel_updates_seen ON channel_updates(seen, short_channel_id, direction) INCLUDE (id, blob_signed);
+CREATE INDEX IF NOT EXISTS channel_updates_scid_seen ON channel_updates(short_channel_id, seen) INCLUDE (blob_signed);
+CREATE INDEX IF NOT EXISTS channel_updates_seen_scid ON channel_updates(seen, short_channel_id);
+CREATE INDEX IF NOT EXISTS channel_updates_scid_dir_seen ON channel_updates(short_channel_id ASC, direction ASC, seen DESC) INCLUDE (id, blob_signed);
+CREATE UNIQUE INDEX IF NOT EXISTS channel_updates_key ON channel_updates (short_channel_id, direction, timestamp);
+                """
+                )
+
+            do!
+                initializeCommand.ExecuteNonQueryAsync()
+                |> Async.AwaitTask
+                |> Async.Ignore
+
             let mutable lastGraphSaveTime = DateTime.MinValue
             let graphSaveInterval = TimeSpan.FromMinutes 10.
 
