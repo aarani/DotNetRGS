@@ -35,6 +35,7 @@ module Program =
                 )
 
             let verifier1 = GossipVerifier(toVerify, toHandle, graph)
+            let verifier2 = GossipVerifier(toVerify, toHandle, graph)
 
             let persistence =
                 GossipPersistence(toHandle, graph, snapshotStartSource)
@@ -46,9 +47,10 @@ module Program =
             )
 
             do!
-                MixedParallel4
+                MixedParallel5
                     (syncer.Start())
                     (verifier1.Start())
+                    (verifier2.Start())
                     (persistence.Start())
                     (snapshotter.Start())
                 |> Async.Ignore
