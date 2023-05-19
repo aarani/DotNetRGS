@@ -1079,9 +1079,9 @@ type GossipSnapshotter(startToken: CancellationToken) =
 
             let messageCount = announcementCount + updateCount
 
-            Console.WriteLine(
-                sprintf "Snapshot created! Message count: %i" messageCount
-            )
+            Logger.Log
+                "GossipSnapshotter"
+                (sprintf "Snapshot created! Message count: %i" messageCount)
 
             return prefixedOutputMemStream.ToArray()
         }
@@ -1112,14 +1112,14 @@ type GossipSnapshotter(startToken: CancellationToken) =
                         let referenceTimestamp =
                             snapshotGenerationTimestamp.Date
 
-                        Console.WriteLine(
-                            sprintf
+                        Logger.Log
+                            "GossipSnapshotter"
+                            (sprintf
                                 "Capturing snapshots at %i for: %i"
                                 (DateTimeUtils.ToUnixTimestamp
                                     snapshotGenerationTimestamp)
                                 (DateTimeUtils.ToUnixTimestamp
-                                    referenceTimestamp)
-                        )
+                                    referenceTimestamp))
 
                         let mutable snapshotSyncTimestamps =
                             snapshotSyncDayFactors
@@ -1157,11 +1157,11 @@ type GossipSnapshotter(startToken: CancellationToken) =
 
                             stopWatch.Stop()
 
-                            Console.WriteLine(
-                                sprintf
+                            Logger.Log
+                                "GossipSnapshotter"
+                                (sprintf
                                     "Snapshot creation took %f seconds to create it"
-                                    stopWatch.Elapsed.TotalSeconds
-                            )
+                                    stopWatch.Elapsed.TotalSeconds)
 
                             let batchCommand = batch.CreateBatchCommand()
 
@@ -1203,18 +1203,17 @@ type GossipSnapshotter(startToken: CancellationToken) =
                         let timeUntilNextDay =
                             nextSnapshot.Subtract DateTime.UtcNow
 
-                        Console.WriteLine(
-                            sprintf
-                                "Snapshotter[%s]: sleeping until next snapshot capture: %fs"
-                                (DateTime.UtcNow.ToString())
-                                timeUntilNextDay.TotalSeconds
-                        )
+                        Logger.Log
+                            "GossipSnapshotter"
+                            (sprintf
+                                "Sleeping until next snapshot capture: %fs"
+                                timeUntilNextDay.TotalSeconds)
 
                         // sleep until next day
                         do! Async.Sleep timeUntilNextDay
                         return! snapshot()
                     with
-                    | ex -> Console.WriteLine(ex.ToString())
+                    | ex -> Logger.Log "GossipSnapshotter" (ex.ToString())
                 }
 
             do! snapshot()

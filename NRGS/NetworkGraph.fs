@@ -118,7 +118,10 @@ type NetworkGraph(dataDir: DirectoryInfo) =
         finally
             Monitor.Exit channelsLock
 
-    member __.AddChannel(ann: UnsignedChannelAnnouncementMsg) (capacityOpt: Option<Money>) =
+    member __.AddChannel
+        (ann: UnsignedChannelAnnouncementMsg)
+        (capacityOpt: Option<Money>)
+        =
         Monitor.Enter channelsLock
 
         try
@@ -155,12 +158,14 @@ type NetworkGraph(dataDir: DirectoryInfo) =
         let dayInSeconds = TimeSpan.FromDays(1.).TotalSeconds |> uint32
 
         if unsignedUpdateMsg.Timestamp < now - twoWeekInSeconds then
-            Console.WriteLine
+            Logger.Log
+                "NetworkGraph"
                 "AddChannelUpdate: received channel update older than two weeks"
 
             false
         elif unsignedUpdateMsg.Timestamp > now + dayInSeconds then
-            Console.WriteLine
+            Logger.Log
+                "NetworkGraph"
                 "AddChannelUpdate: channel_update has a timestamp more than a day in the future"
 
             false
@@ -174,12 +179,21 @@ type NetworkGraph(dataDir: DirectoryInfo) =
                     // in GossipVerifier.
                     // This code checks that if we have the capacity (we're in release mode and
                     // we check the channel on-chain), it shouldn't be less than HtLCMaximumMSat.
-                    match (channel.Capacity, unsignedUpdateMsg.HTLCMaximumMSat) with
-                    | Some capacity, Some htlcMaximum when capacity.Satoshi < htlcMaximum.Satoshi ->
-                        Console.WriteLine "AddChannelUpdate: received channel update with htlc maximum more than the capacity"
+                    match (channel.Capacity, unsignedUpdateMsg.HTLCMaximumMSat)
+                        with
+                    | Some capacity, Some htlcMaximum when
+                        capacity.Satoshi < htlcMaximum.Satoshi
+                        ->
+                        Logger.Log
+                            "NetworkGraph"
+                            "AddChannelUpdate: received channel update with htlc maximum more than the capacity"
+
                         false
                     | _, None ->
-                        Console.WriteLine "AddChannelUpdate: received channel update with no htlc maximum"
+                        Logger.Log
+                            "NetworkGraph"
+                            "AddChannelUpdate: received channel update with no htlc maximum"
+
                         false
                     | _ ->
                         let isForward =
@@ -192,9 +206,9 @@ type NetworkGraph(dataDir: DirectoryInfo) =
                             match previousValueOpt with
                             | Some previousValue ->
                                 if previousValue.Timestamp >= newValue.Timestamp then
-                                    Console.WriteLine(
+                                    Logger.Log
+                                        "NetworkGraph"
                                         "AddChannelUpdate: Update older or same timestamp than last processed update"
-                                    )
 
                                     previousValue
                                 else
@@ -241,12 +255,14 @@ type NetworkGraph(dataDir: DirectoryInfo) =
 
                             channel <> newChannel
                         else
-                            Console.WriteLine
+                            Logger.Log
+                                "NetworkGraph"
                                 "AddChannelUpdate: received updateMsg with invalid signature"
 
                             false
                 | false, _ ->
-                    Console.WriteLine
+                    Logger.Log
+                        "NetworkGraph"
                         "AddChannelUpdate: received channel update for unknown channel"
 
                     false

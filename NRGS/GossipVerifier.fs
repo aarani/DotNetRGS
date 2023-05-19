@@ -33,7 +33,11 @@ type internal GossipVerifier
                 match msg with
                 | RoutingMsg(:? ChannelAnnouncementMsg as channelAnn, bytes) ->
                     let saveChannelAnn(capacityOpt: Option<Money>) =
-                        VerifiedChannelAnnouncement(channelAnn, capacityOpt, bytes)
+                        VerifiedChannelAnnouncement(
+                            channelAnn,
+                            capacityOpt,
+                            bytes
+                        )
                         |> verifiedMsgHandler.SendAsync
                         |> Async.AwaitTask
                         |> Async.Ignore
@@ -75,13 +79,13 @@ type internal GossipVerifier
                                 channelAnn.Contents.ShortChannelId.TxOutIndex.Value
 
 
-                            Console.WriteLine(
-                                sprintf
+                            Logger.Log
+                                "GossipVerifier"
+                                (sprintf
                                     "Looking to verify #%i,#%i,#%i"
                                     blockHeight
                                     blockIndex
-                                    txOutIndex
-                            )
+                                    txOutIndex)
 
 #if !DEBUG
                             let! txId =
@@ -123,17 +127,20 @@ type internal GossipVerifier
                                 ->
                                 do! saveChannelAnn(Some output.Value)
                             | Some _ ->
-                                Console.WriteLine
+                                Logger.Log
+                                    "GossipVerifier"
                                     "Channel announcement key didn't match on-chain script"
                             | None ->
-                                Console.WriteLine
+                                Logger.Log
+                                    "GossipVerifier"
                                     "Output index out of bounds in transaction"
 #else
                             do! saveChannelAnn None
 #endif
                     else
-                        Console.WriteLine
-                            "GossipVerifier: received channel ann with invalid signature"
+                        Logger.Log
+                            "GossipVerifier"
+                            "Received channel ann with invalid signature"
                 | RoutingMsg(:? ChannelUpdateMsg as updateMsg, _bytes) ->
                     do!
                         verifiedMsgHandler.SendAsync msg

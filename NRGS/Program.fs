@@ -42,9 +42,7 @@ module Program =
 
             let snapshotter = GossipSnapshotter snapshotStartSource.Token
 
-            Console.WriteLine(
-                sprintf "NRGS[%s]: started" (DateTime.UtcNow.ToString())
-            )
+            Logger.Log "NRGS" "started"
 
             do!
                 MixedParallel5

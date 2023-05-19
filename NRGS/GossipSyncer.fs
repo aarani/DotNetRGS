@@ -328,11 +328,10 @@ type internal GossipSyncer
                 if not finishedInitialSync then
                     doInitialSync initialNode
                 else
-                    async {
-                        return initialNode
-                    }
+                    async { return initialNode }
 
             finishedInitialSync <- true
+            Logger.Log "GossipSyncer" "finished a full initial sync"
 
             do!
                 toVerifyMsgHandler.SendAsync(FinishedInitialSync)
@@ -348,7 +347,10 @@ type internal GossipSyncer
                 do! self.Download()
             with
             | ex ->
-                Console.WriteLine(sprintf "Connection failed with the following ex:\n %A" ex)
+                Logger.Log
+                    "GossipSyncer"
+                    (sprintf "Connection failed with the following ex:\n %A" ex)
+
                 return! self.DownloadWithReconnect()
         }
 

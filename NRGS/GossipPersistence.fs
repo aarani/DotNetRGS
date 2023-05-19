@@ -84,7 +84,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS channel_updates_key ON channel_updates (short_
                     lastGraphSaveTime <- DateTime.UtcNow
 
                 match msg with
-                | VerifiedChannelAnnouncement (channelAnn, capacityOpt, bytes) ->
+                | VerifiedChannelAnnouncement(channelAnn, capacityOpt, bytes) ->
                     let sqlCommand =
                         dataSource.CreateCommand(
                             "INSERT INTO channel_announcements (short_channel_id, announcement_signed) VALUES ($1, $2) ON CONFLICT (short_channel_id) DO NOTHING"
@@ -103,11 +103,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS channel_updates_key ON channel_updates (short_
                         |> Async.AwaitTask
                         |> Async.Ignore
 
-                    Console.WriteLine(
-                        sprintf
+                    Logger.Log
+                        "GossipPersistence"
+                        (sprintf
                             "Added channel #%i"
-                            (channelAnn.Contents.ShortChannelId.ToUInt64())
-                    )
+                            (channelAnn.Contents.ShortChannelId.ToUInt64()))
 
                     graph.AddChannel channelAnn.Contents capacityOpt
                 | RoutingMsg(:? ChannelUpdateMsg as updateMsg, bytes) ->
@@ -201,17 +201,17 @@ INSERT INTO channel_updates (
                             |> Async.AwaitTask
                             |> Async.Ignore
 
-                        Console.WriteLine(
-                            sprintf
+                        Logger.Log
+                            "GossipPersistence"
+                            (sprintf
                                 "Added update for channel #%i"
-                                (updateMsg.Contents.ShortChannelId.ToUInt64())
-                        )
+                                (updateMsg.Contents.ShortChannelId.ToUInt64()))
                 | FinishedInitialSync ->
                     graph.Save()
 
-                    Console.WriteLine(
+                    Logger.Log
+                        "GossipPersistence"
                         "Finished persisting initial sync, notifying snapshotter..."
-                    )
 
                     notifySnapshotter.Cancel()
                 | _ -> ()
