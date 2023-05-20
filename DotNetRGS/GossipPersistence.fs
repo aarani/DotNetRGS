@@ -24,7 +24,7 @@ type internal GossipPersistence
             let connectionString =
                 "Host=127.0.0.1;Username=postgres;Password=f50d47dc6afe40918afa2a935637ec1e;Database=nrgs"
 
-            use dataSource = NpgsqlDataSource.Create(connectionString)
+            use dataSource = NpgsqlDataSource.Create connectionString
 
             let initializeCommand =
                 dataSource.CreateCommand(
@@ -86,9 +86,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS channel_updates_key ON channel_updates (short_
                 match msg with
                 | VerifiedChannelAnnouncement(channelAnn, capacityOpt, bytes) ->
                     let sqlCommand =
-                        dataSource.CreateCommand(
+                        dataSource.CreateCommand
                             "INSERT INTO channel_announcements (short_channel_id, announcement_signed) VALUES ($1, $2) ON CONFLICT (short_channel_id) DO NOTHING"
-                        )
 
                     sqlCommand.Parameters.AddWithValue(
                         channelAnn.Contents.ShortChannelId.ToUInt64() |> int64

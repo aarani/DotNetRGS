@@ -141,7 +141,7 @@ type internal GossipVerifier
                             Logger.Log
                                 "GossipVerifier"
                                 "Received channel ann with invalid signature"
-                | RoutingMsg(:? ChannelUpdateMsg as updateMsg, _bytes) ->
+                | RoutingMsg(:? ChannelUpdateMsg as _updateMsg, _bytes) ->
                     do!
                         verifiedMsgHandler.SendAsync msg
                         |> Async.AwaitTask

@@ -14,9 +14,8 @@ open Npgsql
 open DotNetRGS.Server.Utils
 
 let dataSource =
-    NpgsqlDataSource.Create(
+    NpgsqlDataSource.Create
         "Host=127.0.0.1;Username=postgres;Password=f50d47dc6afe40918afa2a935637ec1e;Database=nrgs"
-    )
 
 let snapshotServer(lastSyncTimestamp: string) : HttpHandler =
     fun (_next: HttpFunc) (ctx: HttpContext) ->
@@ -28,10 +27,10 @@ let snapshotServer(lastSyncTimestamp: string) : HttpHandler =
             let command =
                 dataSource.CreateCommand(
                     commandText =
-                        "SELECT \"blob\" FROM public.snapshots WHERE \"lastSyncTimestamp\" <= $1 ORDER BY \"lastSyncTimestamp\" ASC LIMIT 1"
+                        "SELECT \"blob\" FROM snapshots WHERE \"lastSyncTimestamp\" <= $1 ORDER BY \"lastSyncTimestamp\" ASC LIMIT 1"
                 )
 
-            command.Parameters.AddWithValue(lastSyncTimestamp) |> ignore
+            command.Parameters.AddWithValue lastSyncTimestamp |> ignore
             let reader = command.ExecuteReader()
 
             if reader.HasRows then
@@ -42,10 +41,10 @@ let snapshotServer(lastSyncTimestamp: string) : HttpHandler =
                     return! ctx.WriteStreamAsync(false, readStream, None, None)
                 else
                     ctx.SetStatusCode 404
-                    return! ctx.WriteTextAsync("Not found!")
+                    return! ctx.WriteTextAsync "Not found!"
             else
                 ctx.SetStatusCode 404
-                return! ctx.WriteTextAsync("Not found!")
+                return! ctx.WriteTextAsync "Not found!"
         }
 
 let webApp =
@@ -68,8 +67,8 @@ let configureApp(app: IApplicationBuilder) =
 
     (match env.IsDevelopment() with
      | true -> app.UseDeveloperExceptionPage()
-     | false -> app.UseGiraffeErrorHandler(errorHandler))
-        .UseGiraffe(webApp)
+     | false -> app.UseGiraffeErrorHandler errorHandler)
+        .UseGiraffe webApp
 
 let configureServices(services: IServiceCollection) =
     services.AddGiraffe() |> ignore

@@ -1059,7 +1059,7 @@ type GossipSnapshotter(startToken: CancellationToken) =
                 new LightningWriterStream(prefixedOutputMemStream)
 
             let prefix = [| 76uy; 68uy; 75uy; 1uy |]
-            prefixedOutputWriter.Write(prefix)
+            prefixedOutputWriter.Write prefix
             prefixedOutputWriter.Write(serializationDetails.ChainHash, true)
             let lastSeenTimestamp = serializationDetails.LatestSeen
             let overflowSeconds = lastSeenTimestamp % 86400u
@@ -1073,9 +1073,9 @@ type GossipSnapshotter(startToken: CancellationToken) =
             prefixedOutputWriter.Write(nodeIdCount, false)
 
             for currentNodeId in nodeIds do
-                prefixedOutputWriter.Write(currentNodeId.ToBytes())
+                currentNodeId.ToBytes() |> prefixedOutputWriter.Write
 
-            prefixedOutputWriter.Write(outputMemStream.ToArray())
+            outputMemStream.ToArray() |> prefixedOutputWriter.Write
 
             let messageCount = announcementCount + updateCount
 
@@ -1127,7 +1127,7 @@ type GossipSnapshotter(startToken: CancellationToken) =
                                 let timestamp =
                                     if factor <> Int32.MaxValue then
                                         referenceTimestamp.Subtract(
-                                            TimeSpan.FromDays(factor)
+                                            TimeSpan.FromDays factor
                                         )
                                     else
                                         DateTime.MinValue
@@ -1190,7 +1190,7 @@ type GossipSnapshotter(startToken: CancellationToken) =
                             )
                             |> ignore
 
-                            batch.BatchCommands.Add(batchCommand)
+                            batch.BatchCommands.Add batchCommand
 
                         do!
                             batch.ExecuteNonQueryAsync()
@@ -1199,11 +1199,7 @@ type GossipSnapshotter(startToken: CancellationToken) =
 
                         // constructing the snapshots may have taken a while
                         let nextSnapshot =
-                            DateTime
-                                .UtcNow
-                                .Date
-                                .AddDays(1.)
-                                .AddMinutes(1.)
+                            DateTime.UtcNow.Date.AddDays(1.).AddMinutes(1.)
 
                         let timeUntilNextDay =
                             nextSnapshot.Subtract DateTime.UtcNow
