@@ -136,7 +136,7 @@ type SerializationSet =
         mutable Announcements: List<UnsignedChannelAnnouncementMsg>
         mutable Updates: List<UpdateSerialization>
         mutable FullUpdateDefaults: DefaultUpdateValues
-        mutable LastestSeen: uint32
+        mutable LatestSeen: uint32
         mutable ChainHash: ChainHash
     }
 
@@ -624,7 +624,7 @@ type GossipSnapshotter(startToken: CancellationToken) =
                 Announcements = List.Empty
                 Updates = List.Empty
                 FullUpdateDefaults = DefaultUpdateValues.Default
-                LastestSeen = 0u
+                LatestSeen = 0u
                 ChainHash = uint256.Zero
             }
 
@@ -697,8 +697,8 @@ type GossipSnapshotter(startToken: CancellationToken) =
                 isNewAnnouncement || isNewlyUpdatedAnnouncement
 
             if sendAnnouncement then
-                serializationSet.LastestSeen <-
-                    max serializationSet.LastestSeen CurrentAnnouncementSeen
+                serializationSet.LatestSeen <-
+                    max serializationSet.LatestSeen CurrentAnnouncementSeen
 
                 serializationSet.Announcements <-
                     channelAnnouncementDelta.Announcement
@@ -715,9 +715,9 @@ type GossipSnapshotter(startToken: CancellationToken) =
                     | Some latestUpdateDelta ->
                         let latestUpdate = latestUpdateDelta.Update
 
-                        serializationSet.LastestSeen <-
+                        serializationSet.LatestSeen <-
                             max
-                                serializationSet.LastestSeen
+                                serializationSet.LatestSeen
                                 latestUpdateDelta.Seen
 
                         if updates.LastUpdateBeforeSeen.IsSome then
@@ -1061,7 +1061,7 @@ type GossipSnapshotter(startToken: CancellationToken) =
             let prefix = [| 76uy; 68uy; 75uy; 1uy |]
             prefixedOutputWriter.Write(prefix)
             prefixedOutputWriter.Write(serializationDetails.ChainHash, true)
-            let lastSeenTimestamp = serializationDetails.LastestSeen
+            let lastSeenTimestamp = serializationDetails.LatestSeen
             let overflowSeconds = lastSeenTimestamp % 86400u
 
             prefixedOutputWriter.Write(
