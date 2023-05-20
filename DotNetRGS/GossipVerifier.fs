@@ -137,10 +137,10 @@ type internal GossipVerifier
 #else
                             do! saveChannelAnn None
 #endif
-                    else
-                        Logger.Log
-                            "GossipVerifier"
-                            "Received channel ann with invalid signature"
+                        else
+                            Logger.Log
+                                "GossipVerifier"
+                                "Received channel ann with invalid signature"
                 | RoutingMsg(:? ChannelUpdateMsg as updateMsg, _bytes) ->
                     do!
                         verifiedMsgHandler.SendAsync msg
