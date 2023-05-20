@@ -1198,7 +1198,12 @@ type GossipSnapshotter(startToken: CancellationToken) =
                             |> Async.Ignore
 
                         // constructing the snapshots may have taken a while
-                        let nextSnapshot = DateTime.UtcNow.Date.AddDays 1
+                        let nextSnapshot =
+                            DateTime
+                                .UtcNow
+                                .Date
+                                .AddDays(1.)
+                                .AddMinutes(1.)
 
                         let timeUntilNextDay =
                             nextSnapshot.Subtract DateTime.UtcNow
