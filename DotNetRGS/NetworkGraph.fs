@@ -175,8 +175,6 @@ type NetworkGraph(dataDir: DirectoryInfo) =
             try
                 match channels.TryGetValue unsignedUpdateMsg.ShortChannelId with
                 | true, channel ->
-                    // HTLCMaximum should technically always be Some because we validate it
-                    // in GossipVerifier.
                     // This code checks that if we have the capacity (we're in release mode and
                     // we check the channel on-chain), it shouldn't be less than HtLCMaximumMSat.
                     match (channel.Capacity, unsignedUpdateMsg.HTLCMaximumMSat)
@@ -189,6 +187,10 @@ type NetworkGraph(dataDir: DirectoryInfo) =
                             "AddChannelUpdate: received channel update with htlc maximum more than the capacity"
 
                         false
+                    // While DNL allows for HTLCMaximumMSat being None most implementations reject updates
+                    // with no HTLCMaximumMSat, our logic depend on HTLCMaximumMSat's value so we reject them as well.
+                    // https://github.com/ACINQ/eclair/commit/c71c3b40465a6fadc8a5cca982a5b466fd0aedfc
+                    // https://github.com/lightning/bolts/commit/6fee63fc342736a2eb7f6e856ae0d85807cc50ec
                     | _, None ->
                         Logger.Log
                             "NetworkGraph"
