@@ -27,7 +27,7 @@ let snapshotServer(lastSyncTimestamp: string) : HttpHandler =
             let command =
                 dataSource.CreateCommand(
                     commandText =
-                        "SELECT \"blob\" FROM snapshots WHERE \"lastSyncTimestamp\" <= $1 ORDER BY \"lastSyncTimestamp\" ASC LIMIT 1"
+                        "SELECT \"blob\" FROM snapshots WHERE \"lastSyncTimestamp\" <= $1 ORDER BY \"lastSyncTimestamp\" DESC LIMIT 1"
                 )
 
             command.Parameters.AddWithValue lastSyncTimestamp |> ignore
