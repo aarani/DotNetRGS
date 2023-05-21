@@ -215,15 +215,16 @@ type GossipSnapshotter
 
                                 if readResult then
                                     let! annSigned =
-                                        reader.GetStream 0
+                                        reader.GetOrdinal "announcement_signed"
+                                        |> reader.GetStream
                                         |> EasyLightningReader.readLightningMsgFromStream<ChannelAnnouncementMsg>
 
                                     let scId = annSigned.Contents.ShortChannelId
 
                                     let currentSeenTimestamp =
-                                        DateTimeUtils.ToUnixTimestamp(
-                                            reader.GetDateTime 1
-                                        )
+                                        reader.GetOrdinal "seen"
+                                        |> reader.GetDateTime
+                                        |> DateTimeUtils.ToUnixTimestamp
 
                                     let previousOrDefault =
                                         deltaSet
@@ -280,13 +281,15 @@ type GossipSnapshotter
 
                                 if readResult then
                                     let! update =
-                                        reader.GetStream 0
+                                        reader.GetOrdinal "blob_signed"
+                                        |> reader.GetStream
                                         |> EasyLightningReader.readLightningMsgFromStream<ChannelUpdateMsg>
 
                                     let scId = update.Contents.ShortChannelId
 
                                     let currentSeenTimestamp =
-                                        reader.GetDateTime 1
+                                        reader.GetOrdinal "seen"
+                                        |> reader.GetDateTime
                                         |> DateTimeUtils.ToUnixTimestamp
 
                                     let previousOrDefault =
@@ -348,7 +351,9 @@ type GossipSnapshotter
                                 let readResult = reader.Read()
 
                                 if readResult then
-                                    let updateId = reader.GetInt32 0
+                                    let updateId =
+                                        reader.GetOrdinal "id"
+                                        |> reader.GetInt32
 
                                     last_seen_update_ids <-
                                         updateId :: last_seen_update_ids
@@ -356,10 +361,13 @@ type GossipSnapshotter
                                     non_intermediate_ids <-
                                         Set.add updateId non_intermediate_ids
 
-                                    let direction = reader.GetBoolean 1
+                                    let direction =
+                                        reader.GetOrdinal "direction"
+                                        |> reader.GetBoolean
 
                                     let! updateMsg =
-                                        reader.GetStream 2
+                                        reader.GetOrdinal "blob_signed"
+                                        |> reader.GetStream
                                         |> EasyLightningReader.readLightningMsgFromStream<ChannelUpdateMsg>
 
                                     let scId = updateMsg.Contents.ShortChannelId
@@ -454,15 +462,20 @@ type GossipSnapshotter
                                 let readResult = reader.Read()
 
                                 if readResult then
-                                    let updateId = reader.GetInt32 0
+                                    let updateId =
+                                        reader.GetOrdinal "id"
+                                        |> reader.GetInt32
 
                                     if non_intermediate_ids.Contains updateId then
                                         return! readRow deltaSet
                                     else
-                                        let direction = reader.GetBoolean 1
+                                        let direction =
+                                            reader.GetOrdinal "direction"
+                                            |> reader.GetBoolean
 
                                         let! updateMsg =
-                                            reader.GetStream 2
+                                            reader.GetOrdinal "blob_signed"
+                                            |> reader.GetStream
                                             |> EasyLightningReader.readLightningMsgFromStream<ChannelUpdateMsg>
 
                                         let scId =
@@ -475,7 +488,8 @@ type GossipSnapshotter
                                                 false, false
 
                                         let currentSeenTimestamp =
-                                            reader.GetDateTime 3
+                                            reader.GetOrdinal "seen"
+                                            |> reader.GetDateTime
 
                                         let currentChannelDelta =
                                             deltaSet
