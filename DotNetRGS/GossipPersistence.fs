@@ -63,6 +63,8 @@ CREATE INDEX IF NOT EXISTS channel_updates_scid_seen ON channel_updates(short_ch
 CREATE INDEX IF NOT EXISTS channel_updates_seen_scid ON channel_updates(seen, short_channel_id);
 CREATE INDEX IF NOT EXISTS channel_updates_scid_dir_seen ON channel_updates(short_channel_id ASC, direction ASC, seen DESC) INCLUDE (id, blob_signed);
 CREATE UNIQUE INDEX IF NOT EXISTS channel_updates_key ON channel_updates (short_channel_id, direction, timestamp);
+ALTER TABLE channel_updates SET ( autovacuum_vacuum_insert_scale_factor = 0.005 );
+ALTER TABLE channel_announcements SET ( autovacuum_vacuum_insert_scale_factor = 0.005 );
                 """
                 )
 
