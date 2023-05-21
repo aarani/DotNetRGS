@@ -39,7 +39,8 @@ module Program =
             let persistence =
                 GossipPersistence(toHandle, graph, snapshotStartSource)
 
-            let snapshotter = GossipSnapshotter snapshotStartSource.Token
+            let snapshotter =
+                GossipSnapshotter(graph, snapshotStartSource.Token)
 
             Logger.Log "DotNetRGS" "started"
 

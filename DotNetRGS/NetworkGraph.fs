@@ -311,6 +311,14 @@ type NetworkGraph(dataDir: DirectoryInfo) =
             )
             |> Map.ofSeq
 
+    member _.GetChannelIds() =
+        Monitor.Enter channelsLock
+
+        try
+            channels.Keys |> Array.ofSeq
+        finally
+            Monitor.Exit channelsLock
+
     member self.Save() =
         Monitor.Enter channelsLock
 

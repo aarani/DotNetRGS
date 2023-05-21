@@ -179,7 +179,11 @@ module EasyLightningReader =
             | _ -> return failwith "how the fuck we have an invalid msg in DB"
         }
 
-type GossipSnapshotter(startToken: CancellationToken) =
+type GossipSnapshotter
+    (
+        networkGraph: NetworkGraph,
+        startToken: CancellationToken
+    ) =
     let dataSource =
         NpgsqlDataSource.Create(
             "Host=127.0.0.1;Username=postgres;Password=f50d47dc6afe40918afa2a935637ec1e;Database=nrgs"
@@ -187,6 +191,7 @@ type GossipSnapshotter(startToken: CancellationToken) =
 
     let fetchChannelAnnouncements
         (deltaSet: DeltaSet)
+        (networkGraph: NetworkGraph)
         (lastSyncTimestamp: DateTime)
         =
         async {
@@ -194,7 +199,12 @@ type GossipSnapshotter(startToken: CancellationToken) =
                 async {
                     let readAnns =
                         dataSource.CreateCommand
-                            "SELECT announcement_signed, seen FROM channel_announcements ORDER BY short_channel_id ASC"
+                            "SELECT announcement_signed, seen FROM channel_announcements WHERE short_channel_id = any($1) ORDER BY short_channel_id ASC"
+
+                    networkGraph.GetChannelIds()
+                    |> Array.map(fun scId -> scId.ToUInt64() |> int64)
+                    |> readAnns.Parameters.AddWithValue
+                    |> ignore<NpgsqlParameter>
 
                     let reader = readAnns.ExecuteReader()
 
@@ -927,6 +937,7 @@ type GossipSnapshotter(startToken: CancellationToken) =
         prefixedMemStream.ToArray()
 
     member __.SerializeDelta
+        (networkGraph: NetworkGraph)
         (lastSyncTimestamp: DateTime)
         (considerIntermediateUpdates: bool)
         =
@@ -955,7 +966,11 @@ type GossipSnapshotter(startToken: CancellationToken) =
 
             let deltaSet = DeltaSet(Seq.empty)
 
-            let! deltaSet = fetchChannelAnnouncements deltaSet lastSyncTimestamp
+            let! deltaSet =
+                fetchChannelAnnouncements
+                    deltaSet
+                    networkGraph
+                    lastSyncTimestamp
 
             let! deltaSet =
                 fetchChannelUpdates
@@ -1152,6 +1167,7 @@ type GossipSnapshotter(startToken: CancellationToken) =
 
                             let! snapshot =
                                 self.SerializeDelta
+                                    networkGraph
                                     currentLastSyncTimestamp
                                     true
 
