@@ -1,6 +1,7 @@
 ﻿namespace DotNetRGS
 
 open System
+open System.Diagnostics
 open System.IO
 open System.Threading
 
@@ -16,7 +17,6 @@ open Npgsql
 
 open DotNetRGS.Utils
 open DotNetRGS.Utils.FSharpUtil
-open System.Diagnostics
 
 type MutatedProperties =
     {
@@ -95,7 +95,7 @@ type ChannelDelta =
     static member Default =
         {
             Announcement = None
-            Updates = (None, None)
+            Updates = None, None
             FirstUpdateSeen = None
         }
 
@@ -328,8 +328,7 @@ type GossipSnapshotter
         (considerIntermediateUpdates: bool)
         =
         async {
-            let mutable last_seen_update_ids = List<int>.Empty
-            let mutable non_intermediate_ids = Set<int>(Seq.empty)
+            let mutable nonIntermediateIds = Set<int>(Seq.empty)
             // get the latest channel update in each direction prior to last_sync_timestamp, provided
             // there was an update in either direction that happened after the last sync (to avoid
             // collecting too many reference updates)
@@ -355,11 +354,8 @@ type GossipSnapshotter
                                         reader.GetOrdinal "id"
                                         |> reader.GetInt32
 
-                                    last_seen_update_ids <-
-                                        updateId :: last_seen_update_ids
-
-                                    non_intermediate_ids <-
-                                        Set.add updateId non_intermediate_ids
+                                    nonIntermediateIds <-
+                                        Set.add updateId nonIntermediateIds
 
                                     let direction =
                                         reader.GetOrdinal "direction"
@@ -454,7 +450,7 @@ type GossipSnapshotter
                     let mutable previousShortChannelId =
                         ShortChannelId.FromUInt64 UInt64.MaxValue
 
-                    let mutable previouslySeenDirections = (false, false)
+                    let mutable previouslySeenDirections = false, false
 
                     if reader.HasRows then
                         let rec readRow(deltaSet: DeltaSet) =
@@ -466,7 +462,7 @@ type GossipSnapshotter
                                         reader.GetOrdinal "id"
                                         |> reader.GetInt32
 
-                                    if non_intermediate_ids.Contains updateId then
+                                    if nonIntermediateIds.Contains updateId then
                                         return! readRow deltaSet
                                     else
                                         let direction =
@@ -620,8 +616,6 @@ type GossipSnapshotter
             : List<ShortChannelId * ChannelDelta> =
             match deltaSet with
             | (scId, delta) :: tail ->
-                //FIXME: this doesn't really do anything because we don't have network graph
-                // like original rgs does. pruning is an issue which needs to be solved.
                 if delta.Announcement.IsNone then
                     filter tail state
                 else
@@ -709,8 +703,8 @@ type GossipSnapshotter
                 serializationSet.ChainHash <-
                     channelAnnouncementDelta.Announcement.ChainHash
 
-            let CurrentAnnouncementSeen = channelAnnouncementDelta.Seen
-            let isNewAnnouncement = CurrentAnnouncementSeen >= lastSyncTimestamp
+            let currentAnnouncementSeen = channelAnnouncementDelta.Seen
+            let isNewAnnouncement = currentAnnouncementSeen >= lastSyncTimestamp
 
             let isNewlyUpdatedAnnouncement =
                 match channelDelta.FirstUpdateSeen with
@@ -722,7 +716,7 @@ type GossipSnapshotter
 
             if sendAnnouncement then
                 serializationSet.LatestSeen <-
-                    max serializationSet.LatestSeen CurrentAnnouncementSeen
+                    max serializationSet.LatestSeen currentAnnouncementSeen
 
                 serializationSet.Announcements <-
                     channelAnnouncementDelta.Announcement
@@ -748,7 +742,7 @@ type GossipSnapshotter
                             let mutatedProperties = updates.MutatedProperties
 
                             if mutatedProperties.Length() = 5 then
-                                // all five values have changed, it makes more sense to just
+                                // All five values have changed, it makes more sense to just
                                 // serialize the update as a full update instead of as a change
                                 // this way, the default values can be computed more efficiently
                                 recordFullUpdateInHistograms latestUpdate
@@ -762,7 +756,7 @@ type GossipSnapshotter
                                     :: serializationSet.Updates
                             elif mutatedProperties.Length() > 0
                                  || mutatedProperties.Flags then
-                                // we don't count flags as mutated properties
+                                // We don't count flags as mutated properties
                                 serializationSet.Updates <-
                                     {
                                         Update = latestUpdate
@@ -817,10 +811,11 @@ type GossipSnapshotter
         (announcement: UnsignedChannelAnnouncementMsg)
         (nodeIdAIndex: int)
         (nodeIdBIndex: int)
-        (previousSCId: ShortChannelId)
+        (previousShortChannelId: ShortChannelId)
         =
-        if previousSCId > announcement.ShortChannelId then
-            failwith "unsorted scids!"
+        if previousShortChannelId > announcement.ShortChannelId then
+            failwith
+                "Channels need to be sorted by ID before serialization can happen."
 
         use memStream = new MemoryStream()
         use writerStream = new LightningWriterStream(memStream)
@@ -830,7 +825,8 @@ type GossipSnapshotter
         writerStream.WriteWithLen features
 
         writerStream.WriteBigSize(
-            announcement.ShortChannelId.ToUInt64() - previousSCId.ToUInt64()
+            announcement.ShortChannelId.ToUInt64()
+            - previousShortChannelId.ToUInt64()
         )
 
         writerStream.WriteBigSize(uint64 nodeIdAIndex)
@@ -841,13 +837,14 @@ type GossipSnapshotter
     let serializeStrippedChannelUpdate
         (update: UpdateSerialization)
         (defaultValues: DefaultUpdateValues)
-        (previousSCId: ShortChannelId)
+        (previousShortChannelId: ShortChannelId)
         =
         let latestUpdate = update.Update
         let mutable serializedFlags = latestUpdate.ChannelFlags
 
-        if previousSCId > latestUpdate.ShortChannelId then
-            failwith "unsorted scids!"
+        if previousShortChannelId > latestUpdate.ShortChannelId then
+            failwith
+                "Channels need to be sorted by ID before serialization can happen."
 
         use deltaMemStream = new MemoryStream()
         use deltaWriterStream = new LightningWriterStream(deltaMemStream)
@@ -942,7 +939,8 @@ type GossipSnapshotter
         use prefixedWriterStream = new LightningWriterStream(prefixedMemStream)
 
         prefixedWriterStream.WriteBigSize(
-            update.Update.ShortChannelId.ToUInt64() - previousSCId.ToUInt64()
+            update.Update.ShortChannelId.ToUInt64()
+            - previousShortChannelId.ToUInt64()
         )
 
         prefixedWriterStream.WriteByte serializedFlags
@@ -959,17 +957,15 @@ type GossipSnapshotter
             use outputMemStream = new MemoryStream()
             use outputWriter = new LightningWriterStream(outputMemStream)
 
-            let mutable nodeIdsSet = Set<array<byte>>(Seq.empty)
-            let mutable nodeIds = List<PubKey>.Empty
-            let mutable nodeIdsIndices = Map<array<byte>, int>(Seq.empty)
+            let nodeIds = ResizeArray<PubKey>()
+            let mutable nodeIdsIndices = Map<array<byte>, int> Seq.empty
 
             let getNodeIdIndex(nodeId: NodeId) =
                 let serializedNodeId = nodeId.Value.ToBytes()
 
-                if nodeIdsSet |> Set.contains serializedNodeId |> not then
-                    nodeIdsSet <- nodeIdsSet.Add serializedNodeId
-                    nodeIds <- nodeIds @ List.singleton nodeId.Value
-                    let index = nodeIds.Length - 1
+                if nodeIdsIndices |> Map.containsKey serializedNodeId |> not then
+                    nodeIds.Add nodeId.Value
+                    let index = nodeIds.Count - 1
 
                     nodeIdsIndices <-
                         Map.add serializedNodeId index nodeIdsIndices
@@ -978,7 +974,7 @@ type GossipSnapshotter
                 else
                     nodeIdsIndices.[serializedNodeId]
 
-            let deltaSet = DeltaSet(Seq.empty)
+            let deltaSet = DeltaSet Seq.empty
 
             let! deltaSet =
                 fetchChannelAnnouncements
@@ -1008,7 +1004,8 @@ type GossipSnapshotter
                 serializationDetails.Announcements
                 |> Seq.sortBy(fun ann -> ann.ShortChannelId.ToUInt64())
 
-            let mutable previousAnnouncementSCId = ShortChannelId.FromUInt64 0UL
+            let mutable previousAnnouncementShortChannelId =
+                ShortChannelId.FromUInt64 0UL
 
             // process announcements
             // write the number of channel announcements to the output
@@ -1021,7 +1018,7 @@ type GossipSnapshotter
                         currentAnnouncement
                         idIndex1
                         idIndex2
-                        previousAnnouncementSCId
+                        previousAnnouncementShortChannelId
 
                 outputMemStream.Write(
                     strippedAnnouncement,
@@ -1029,9 +1026,11 @@ type GossipSnapshotter
                     strippedAnnouncement.Length
                 )
 
-                previousAnnouncementSCId <- currentAnnouncement.ShortChannelId
+                previousAnnouncementShortChannelId <-
+                    currentAnnouncement.ShortChannelId
 
-            let mutable previousUpdateSCId = ShortChannelId.FromUInt64 0UL
+            let mutable previousUpdateShortChannelId =
+                ShortChannelId.FromUInt64 0UL
 
             let updateCount = uint32 serializationDetails.Updates.Length
             outputWriter.Write(updateCount, false)
@@ -1072,7 +1071,7 @@ type GossipSnapshotter
                     serializeStrippedChannelUpdate
                         currentUpdate
                         defaultValues
-                        previousUpdateSCId
+                        previousUpdateShortChannelId
 
                 outputMemStream.Write(
                     strippedChannelUpdate,
@@ -1080,7 +1079,8 @@ type GossipSnapshotter
                     strippedChannelUpdate.Length
                 )
 
-                previousUpdateSCId <- currentUpdate.Update.ShortChannelId
+                previousUpdateShortChannelId <-
+                    currentUpdate.Update.ShortChannelId
 
             let prefixedOutputMemStream = new MemoryStream()
 
@@ -1098,7 +1098,7 @@ type GossipSnapshotter
                 false
             )
 
-            let nodeIdCount = nodeIds.Length |> uint32
+            let nodeIdCount = nodeIds.Count |> uint32
             prefixedOutputWriter.Write(nodeIdCount, false)
 
             for currentNodeId in nodeIds do

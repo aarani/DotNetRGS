@@ -1,7 +1,6 @@
 ﻿namespace DotNetRGS
 
 open System
-open System.IO
 open System.Threading.Tasks.Dataflow
 
 open DotNetLightning.Serialization.Msgs
@@ -86,7 +85,7 @@ type internal GossipSyncer
                             TLVs = [||]
                         }
 
-                    // step 1: send query_channel_range, read all replies and collect short channel ids from them
+                    // Step 1: send query_channel_range, read all replies and collect short channel ids from them
                     let! node = node.SendMsg queryMsg
 
                     let shortChannelIds = ResizeArray<ShortChannelId>()
@@ -146,7 +145,7 @@ type internal GossipSyncer
                         |> Seq.chunkBySize batchSize
                         |> Collections.Generic.Queue
 
-                    // step 2: split shortChannelIds into batches and for each batch:
+                    // Step 2: split shortChannelIds into batches and for each batch:
                     // - send query_short_channel_ids
                     // - receive routing messages and add them to result until we get reply_short_channel_ids_end
                     let rec processMessages(node: PeerNode) : Async<PeerNode> =
@@ -334,7 +333,7 @@ type internal GossipSyncer
             Logger.Log "GossipSyncer" "finished a full initial sync"
 
             do!
-                toVerifyMsgHandler.SendAsync(FinishedInitialSync)
+                toVerifyMsgHandler.SendAsync FinishedInitialSync
                 |> Async.AwaitTask
                 |> Async.Ignore
 

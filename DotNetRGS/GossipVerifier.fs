@@ -45,9 +45,8 @@ type internal GossipVerifier
                     if graph.ValidateChannelAnnouncement channelAnn.Contents then
                         let hasValidSigs =
                             let hash =
-                                NBitcoin.Crypto.Hashes.DoubleSHA256(
-                                    channelAnn.Contents.ToBytes()
-                                )
+                                channelAnn.Contents.ToBytes()
+                                |> NBitcoin.Crypto.Hashes.DoubleSHA256
 
                             let verify
                                 (key: PubKey)

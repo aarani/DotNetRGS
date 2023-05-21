@@ -1,13 +1,13 @@
 ﻿namespace DotNetRGS
 
 open System
+open System.Threading
 open System.Threading.Tasks.Dataflow
 
 open DotNetLightning.Serialization.Msgs
 open DotNetLightning.Utils
 
 open Npgsql
-open System.Threading
 
 type internal GossipPersistence
     (
@@ -91,9 +91,10 @@ ALTER TABLE channel_announcements SET ( autovacuum_vacuum_insert_scale_factor = 
                         dataSource.CreateCommand
                             "INSERT INTO channel_announcements (short_channel_id, announcement_signed) VALUES ($1, $2) ON CONFLICT (short_channel_id) DO NOTHING"
 
-                    sqlCommand.Parameters.AddWithValue(
-                        channelAnn.Contents.ShortChannelId.ToUInt64() |> int64
-                    )
+                    // NpgSql doesn't support uint64 so we need to cast it to int64
+                    channelAnn.Contents.ShortChannelId.ToUInt64()
+                    |> int64
+                    |> sqlCommand.Parameters.AddWithValue
                     |> ignore<NpgsqlParameter>
 
                     sqlCommand.Parameters.AddWithValue bytes
