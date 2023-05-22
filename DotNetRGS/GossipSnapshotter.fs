@@ -1091,7 +1091,10 @@ type GossipSnapshotter
             prefixedOutputWriter.Write prefix
             prefixedOutputWriter.Write(serializationDetails.ChainHash, true)
             let lastSeenTimestamp = serializationDetails.LatestSeen
-            let overflowSeconds = lastSeenTimestamp % 86400u
+
+            let overflowSeconds =
+                let dayInSeconds = TimeSpan.FromDays(1.).TotalSeconds |> uint32
+                lastSeenTimestamp % dayInSeconds
 
             prefixedOutputWriter.Write(
                 lastSeenTimestamp - overflowSeconds,
