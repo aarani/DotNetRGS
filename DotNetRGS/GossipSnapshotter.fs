@@ -328,11 +328,12 @@ type GossipSnapshotter
         (considerIntermediateUpdates: bool)
         =
         async {
-            let mutable nonIntermediateIds = Set<int>(Seq.empty)
+            let emptySet = Set<int> Seq.empty
+
             // get the latest channel update in each direction prior to last_sync_timestamp, provided
             // there was an update in either direction that happened after the last sync (to avoid
             // collecting too many reference updates)
-            let readReference(deltaSet: DeltaSet) =
+            let readReferences(deltaSet: DeltaSet) =
                 async {
                     let readCommand =
                         dataSource.CreateCommand(
@@ -345,7 +346,10 @@ type GossipSnapshotter
                     let reader = readCommand.ExecuteReader()
 
                     if reader.HasRows then
-                        let rec readRow(deltaSet: DeltaSet) =
+                        let rec innerReadReferences
+                            (referenceIds: Set<int>)
+                            (deltaSet: DeltaSet)
+                            =
                             async {
                                 let readResult = reader.Read()
 
@@ -353,9 +357,6 @@ type GossipSnapshotter
                                     let updateId =
                                         reader.GetOrdinal "id"
                                         |> reader.GetInt32
-
-                                    nonIntermediateIds <-
-                                        Set.add updateId nonIntermediateIds
 
                                     let direction =
                                         reader.GetOrdinal "direction"
@@ -413,21 +414,26 @@ type GossipSnapshotter
                                     return!
                                         deltaSet
                                         |> Map.add scId channelDelta
-                                        |> readRow
+                                        |> innerReadReferences(
+                                            Set.add updateId referenceIds
+                                        )
                                 else
-                                    return deltaSet
+                                    return deltaSet, referenceIds
                             }
 
-                        return! readRow deltaSet
+                        return! innerReadReferences emptySet deltaSet
                     else
-                        return deltaSet
+                        return deltaSet, emptySet
                 }
 
-            let! deltaSet = readReference deltaSet
+            let! deltaSet, referenceIds = readReferences deltaSet
             // get all the intermediate channel updates
             // (to calculate the set of mutated fields for snapshotting, where intermediate updates may
             // have been omitted)
-            let readIntermediates(deltaSet: DeltaSet) =
+            let readIntermediates
+                (deltaSet: DeltaSet)
+                (referenceIds: Set<int>)
+                =
                 async {
                     let readCommand =
                         let prefix =
@@ -462,7 +468,7 @@ type GossipSnapshotter
                                         reader.GetOrdinal "id"
                                         |> reader.GetInt32
 
-                                    if nonIntermediateIds.Contains updateId then
+                                    if referenceIds.Contains updateId then
                                         return! readRow deltaSet
                                     else
                                         let direction =
@@ -604,7 +610,7 @@ type GossipSnapshotter
                         return deltaSet
                 }
 
-            let! deltaSet = readIntermediates deltaSet
+            let! deltaSet = readIntermediates deltaSet referenceIds
 
             return deltaSet
         }
