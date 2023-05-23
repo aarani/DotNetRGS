@@ -210,7 +210,7 @@ type NetworkGraph(dataDir: DirectoryInfo) =
                                 if previousValue.Timestamp >= newValue.Timestamp then
                                     Logger.Log
                                         "NetworkGraph"
-                                        "AddChannelUpdate: Update older or same timestamp than last processed update"
+                                        "AddChannelUpdate: received update older or same as the last processed update"
 
                                     previousValue
                                 else
