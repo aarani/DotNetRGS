@@ -31,7 +31,7 @@ let snapshotServer(lastSyncTimestamp: string) : HttpHandler =
                 )
 
             command.Parameters.AddWithValue lastSyncTimestamp |> ignore
-            let reader = command.ExecuteReader()
+            use reader = command.ExecuteReader()
 
             if reader.HasRows then
                 let readResult = reader.Read()

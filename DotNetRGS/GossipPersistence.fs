@@ -26,7 +26,7 @@ type internal GossipPersistence
 
             use dataSource = NpgsqlDataSource.Create connectionString
 
-            let initializeCommand =
+            use initializeCommand =
                 dataSource.CreateCommand(
                     """
 CREATE TABLE IF NOT EXISTS snapshots
@@ -87,7 +87,7 @@ ALTER TABLE channel_announcements SET ( autovacuum_vacuum_insert_scale_factor = 
 
                 match msg with
                 | VerifiedChannelAnnouncement(channelAnn, capacityOpt, bytes) ->
-                    let sqlCommand =
+                    use sqlCommand =
                         dataSource.CreateCommand
                             "INSERT INTO channel_announcements (short_channel_id, announcement_signed) VALUES ($1, $2) ON CONFLICT (short_channel_id) DO NOTHING"
 
@@ -143,7 +143,7 @@ ALTER TABLE channel_announcements SET ( autovacuum_vacuum_insert_scale_factor = 
                             updateMsg.Contents.HTLCMaximumMSat.Value.MilliSatoshi
                             |> int64
 
-                        let sqlCommand =
+                        use sqlCommand =
                             dataSource.CreateCommand(
                                 """
 INSERT INTO channel_updates (

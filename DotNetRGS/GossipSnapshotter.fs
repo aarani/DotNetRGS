@@ -197,7 +197,7 @@ type GossipSnapshotter
         async {
             let rec readCurrentAnnouncements(deltaSet: DeltaSet) =
                 async {
-                    let readAnns =
+                    use readAnns =
                         dataSource.CreateCommand
                             "SELECT announcement_signed, seen FROM channel_announcements WHERE short_channel_id = any($1) ORDER BY short_channel_id ASC"
 
@@ -206,7 +206,7 @@ type GossipSnapshotter
                     |> readAnns.Parameters.AddWithValue
                     |> ignore<NpgsqlParameter>
 
-                    let reader = readAnns.ExecuteReader()
+                    use reader = readAnns.ExecuteReader()
 
                     if reader.HasRows then
                         let rec readRow deltaSet =
@@ -265,14 +265,14 @@ type GossipSnapshotter
                 (deltaSet: Map<ShortChannelId, ChannelDelta>)
                 =
                 async {
-                    let readNewUpdates =
+                    use readNewUpdates =
                         dataSource.CreateCommand
                             "SELECT blob_signed, seen FROM (SELECT DISTINCT ON (short_channel_id) short_channel_id, blob_signed, seen FROM channel_updates ORDER BY short_channel_id ASC, seen ASC) AS first_seens WHERE first_seens.seen >= $1"
 
                     readNewUpdates.Parameters.AddWithValue lastSyncTimestamp
                     |> ignore<NpgsqlParameter>
 
-                    let reader = readNewUpdates.ExecuteReader()
+                    use reader = readNewUpdates.ExecuteReader()
 
                     if reader.HasRows then
                         let rec readRow deltaSet =
@@ -335,7 +335,7 @@ type GossipSnapshotter
             // collecting too many reference updates)
             let readReferences(deltaSet: DeltaSet) =
                 async {
-                    let readCommand =
+                    use readCommand =
                         dataSource.CreateCommand(
                             "SELECT DISTINCT ON (short_channel_id, direction) id, direction, blob_signed FROM channel_updates WHERE seen < $1 AND short_channel_id IN (SELECT short_channel_id FROM channel_updates WHERE seen >= $1 GROUP BY short_channel_id) ORDER BY short_channel_id ASC, direction ASC, seen DESC"
                         )
@@ -343,7 +343,7 @@ type GossipSnapshotter
                     readCommand.Parameters.AddWithValue lastSyncTimeStamp
                     |> ignore<NpgsqlParameter>
 
-                    let reader = readCommand.ExecuteReader()
+                    use reader = readCommand.ExecuteReader()
 
                     if reader.HasRows then
                         let rec innerReadReferences
@@ -435,7 +435,7 @@ type GossipSnapshotter
                 (referenceIds: Set<int>)
                 =
                 async {
-                    let readCommand =
+                    use readCommand =
                         let prefix =
                             if not considerIntermediateUpdates then
                                 "DISTINCT ON (short_channel_id, direction)"
@@ -451,7 +451,7 @@ type GossipSnapshotter
                     readCommand.Parameters.AddWithValue lastSyncTimeStamp
                     |> ignore<NpgsqlParameter>
 
-                    let reader = readCommand.ExecuteReader()
+                    use reader = readCommand.ExecuteReader()
 
                     let mutable previousShortChannelId =
                         ShortChannelId.FromUInt64 UInt64.MaxValue
@@ -1173,7 +1173,7 @@ type GossipSnapshotter
                                 factor, timestamp
                             )
 
-                        let batch = dataSource.CreateBatch()
+                        use batch = dataSource.CreateBatch()
 
                         batch.BatchCommands.Add(
                             batch.CreateBatchCommand(
