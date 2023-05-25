@@ -15,6 +15,8 @@ open ResultUtils.Portability
 
 open Npgsql
 
+open Microsoft.Extensions.Configuration
+
 open DotNetRGS.Utils
 open DotNetRGS.Utils.FSharpUtil
 
@@ -181,13 +183,12 @@ module EasyLightningReader =
 
 type GossipSnapshotter
     (
+        configuration: IConfiguration,
         networkGraph: NetworkGraph,
         startToken: CancellationToken
     ) =
     let dataSource =
-        NpgsqlDataSource.Create(
-            "Host=127.0.0.1;Username=postgres;Password=f50d47dc6afe40918afa2a935637ec1e;Database=nrgs"
-        )
+        NpgsqlDataSource.Create(configuration.GetConnectionString("MainDB"))
 
     let fetchChannelAnnouncements
         (deltaSet: DeltaSet)

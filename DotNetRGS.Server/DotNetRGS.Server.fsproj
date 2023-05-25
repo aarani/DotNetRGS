@@ -8,10 +8,16 @@
 
   <ItemGroup>
     <PackageReference Include="Giraffe" Version="6.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="7.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="3.1.8" />
     <PackageReference Include="Npgsql" Version="7.0.4" />
+    <PackageReference Include="Npgsql.DependencyInjection" Version="7.0.4" />
   </ItemGroup>
 
   <ItemGroup>
+    <Content Include="appsettings.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
     <Compile Include="Utils\DateTimeUtils.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>

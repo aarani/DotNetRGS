@@ -1,6 +1,7 @@
 ﻿namespace DotNetRGS
 
 open System
+open System.IO
 open System.Threading
 open System.Threading.Tasks.Dataflow
 
@@ -10,11 +11,19 @@ open GWallet.Backend
 open GWallet.Backend.FSharpUtil.AsyncExtensions
 open GWallet.Backend.UtxoCoin.Lightning
 
+open Microsoft.Extensions.Configuration
+
 module Program =
 
     [<EntryPoint>]
     let main argv =
         async {
+            let configuration =
+                ConfigurationBuilder()
+                    .SetBasePath(Directory.GetCurrentDirectory())
+                    .AddJsonFile("appsettings.json", false, false)
+                    .Build()
+
             let graph = NetworkGraph()
 
             let blockOption = DataflowBlockOptions()
@@ -24,29 +33,41 @@ module Program =
 
             let snapshotStartSource = new CancellationTokenSource()
 
-            let syncer =
-                GossipSyncer(
-                    NodeIdentifier.TcpEndPoint(
-                        NodeEndPoint.Parse
-                            Currency.BTC
-                            "035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc226@170.75.163.209:9735"
-                    ),
-                    toVerify
+            let syncers =
+                configuration.GetSection("Peers").Get<string []>()
+                |> Seq.map(fun peerInfo ->
+                    GossipSyncer(
+                        NodeIdentifier.TcpEndPoint(
+                            NodeEndPoint.Parse Currency.BTC peerInfo
+                        ),
+                        toVerify
+                    )
                 )
 
             let verifier1 = GossipVerifier(toVerify, toHandle, graph)
 
             let persistence =
-                GossipPersistence(toHandle, graph, snapshotStartSource)
+                GossipPersistence(
+                    configuration,
+                    toHandle,
+                    graph,
+                    snapshotStartSource
+                )
 
             let snapshotter =
-                GossipSnapshotter(graph, snapshotStartSource.Token)
+                GossipSnapshotter(
+                    configuration,
+                    graph,
+                    snapshotStartSource.Token
+                )
 
             Logger.Log "DotNetRGS" "started"
 
             do!
                 MixedParallel4
-                    (syncer.Start())
+                    (syncers
+                     |> Seq.map(fun syncer -> syncer.Start())
+                     |> Async.Parallel)
                     (verifier1.Start())
                     (persistence.Start())
                     (snapshotter.Start())

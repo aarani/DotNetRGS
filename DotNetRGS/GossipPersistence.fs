@@ -9,8 +9,11 @@ open DotNetLightning.Utils
 
 open Npgsql
 
+open Microsoft.Extensions.Configuration
+
 type internal GossipPersistence
     (
+        configuration: IConfiguration,
         verifiedMsgHandler: BufferBlock<Message>,
         graph: NetworkGraph,
         notifySnapshotter: CancellationTokenSource
@@ -21,8 +24,7 @@ type internal GossipPersistence
             let! cancelToken = Async.CancellationToken
             cancelToken.ThrowIfCancellationRequested()
 
-            let connectionString =
-                "Host=127.0.0.1;Username=postgres;Password=f50d47dc6afe40918afa2a935637ec1e;Database=nrgs"
+            let connectionString = configuration.GetConnectionString("MainDB")
 
             use dataSource = NpgsqlDataSource.Create connectionString
 

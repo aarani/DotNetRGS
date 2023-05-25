@@ -7,6 +7,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Content Include="appsettings.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
     <Compile Include="Utils\HistogramUtil.fs" />
     <Compile Include="Utils\FSharpUtil.fs" />
     <Compile Include="Utils\DateTimeUtils.fs" />
@@ -26,6 +29,9 @@
 
   <ItemGroup>
     <PackageReference Include="DotNetLightning.Kiss" Version="1.2.0-alpha3" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="7.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="7.0.4" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="7.0.0" />
     <PackageReference Include="NBitcoin" Version="6.0.19" />
     <PackageReference Include="Newtonsoft.Json" Version="12.0.2" />
     <PackageReference Include="NOnion" Version="0.12.0--date20221114-1053.git-d750cfe" />

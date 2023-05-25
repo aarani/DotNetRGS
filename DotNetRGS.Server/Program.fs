@@ -1,7 +1,9 @@
 module DotNetRGS.Server.App
 
 open System
+open System.IO
 open Microsoft.AspNetCore.Builder
+open Microsoft.Extensions.Configuration
 open Microsoft.AspNetCore.Hosting
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Logging
@@ -13,18 +15,16 @@ open Npgsql
 
 open DotNetRGS.Server.Utils
 
-let dataSource =
-    NpgsqlDataSource.Create
-        "Host=127.0.0.1;Username=postgres;Password=f50d47dc6afe40918afa2a935637ec1e;Database=nrgs"
-
 let snapshotServer(lastSyncTimestamp: string) : HttpHandler =
     fun (_next: HttpFunc) (ctx: HttpContext) ->
         task {
+            let dataSource = ctx.GetService<NpgsqlDataSource>()
+
             let lastSyncTimestamp =
                 Convert.ToUInt32 lastSyncTimestamp
                 |> DateTimeUtils.FromUnixTimestamp
 
-            let command =
+            use command =
                 dataSource.CreateCommand(
                     commandText =
                         "SELECT \"blob\" FROM snapshots WHERE \"lastSyncTimestamp\" <= $1 ORDER BY \"lastSyncTimestamp\" DESC LIMIT 1"
@@ -70,20 +70,32 @@ let configureApp(app: IApplicationBuilder) =
      | false -> app.UseGiraffeErrorHandler errorHandler)
         .UseGiraffe webApp
 
-let configureServices(services: IServiceCollection) =
-    services.AddGiraffe() |> ignore
+let configureServices
+    (configuration: IConfiguration)
+    (services: IServiceCollection)
+    =
+    services
+        .AddGiraffe()
+        .AddNpgsqlDataSource(configuration.GetConnectionString("MainDB"))
+    |> ignore<IServiceCollection>
 
 let configureLogging(builder: ILoggingBuilder) =
     builder.AddConsole().AddDebug() |> ignore
 
 [<EntryPoint>]
 let main args =
+    let configuration =
+        ConfigurationBuilder()
+            .SetBasePath(Directory.GetCurrentDirectory())
+            .AddJsonFile("appsettings.json", false, false)
+            .Build()
+
     Host
         .CreateDefaultBuilder(args)
         .ConfigureWebHostDefaults(fun webHostBuilder ->
             webHostBuilder
                 .Configure(Action<IApplicationBuilder> configureApp)
-                .ConfigureServices(configureServices)
+                .ConfigureServices(configureServices configuration)
                 .ConfigureLogging(configureLogging)
             |> ignore
         )
