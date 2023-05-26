@@ -1166,7 +1166,7 @@ type GossipSnapshotter
                                 let timestamp =
                                     if factor <> Int32.MaxValue then
                                         referenceTimestamp.Subtract(
-                                            TimeSpan.FromDays factor
+                                            factor |> float |> TimeSpan.FromDays
                                         )
                                     else
                                         DateTime.MinValue

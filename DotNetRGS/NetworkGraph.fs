@@ -312,10 +312,16 @@ type NetworkGraph(dataDir: DirectoryInfo) =
             |> Map.ofSeq
 
     member _.GetChannelIds() =
+        let keys(map: Map<'K, 'V>) =
+            seq {
+                for KeyValue(key, value) in map do
+                    yield key
+            }
+
         Monitor.Enter channelsLock
 
         try
-            channels.Keys |> Array.ofSeq
+            channels |> keys |> Array.ofSeq
         finally
             Monitor.Exit channelsLock
 
