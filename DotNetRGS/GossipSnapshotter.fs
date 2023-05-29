@@ -847,7 +847,7 @@ type GossipSnapshotter
         (previousShortChannelId: ShortChannelId)
         =
         let latestUpdate = update.Update
-        let mutable serializedFlags = latestUpdate.ChannelFlags
+        let channelFlags = latestUpdate.ChannelFlags
 
         if previousShortChannelId > latestUpdate.ShortChannelId then
             failwith
@@ -856,91 +856,132 @@ type GossipSnapshotter
         use deltaMemStream = new MemoryStream()
         use deltaWriterStream = new LightningWriterStream(deltaMemStream)
 
-        match update.Mechanism with
-        | UpdateSerializationMechanism.Full ->
-            if latestUpdate.CLTVExpiryDelta <> defaultValues.CLTVExpiryDelta then
-                serializedFlags <- serializedFlags ||| 0b0100_0000uy
+        let serializedFlags =
+            match update.Mechanism with
+            | UpdateSerializationMechanism.Full ->
+                let serializedFlags = channelFlags
 
-                deltaWriterStream.Write(
-                    latestUpdate.CLTVExpiryDelta.Value,
-                    false
-                )
+                let serializedFlags =
+                    if latestUpdate.CLTVExpiryDelta
+                       <> defaultValues.CLTVExpiryDelta then
+                        deltaWriterStream.Write(
+                            latestUpdate.CLTVExpiryDelta.Value,
+                            false
+                        )
 
-            if latestUpdate.HTLCMinimumMSat <> defaultValues.HTLCMinimumMSat then
-                serializedFlags <- serializedFlags ||| 0b0010_0000uy
+                        serializedFlags ||| 0b0100_0000uy
+                    else
+                        serializedFlags
 
-                deltaWriterStream.Write(
-                    latestUpdate.HTLCMinimumMSat.MilliSatoshi |> uint64,
-                    false
-                )
+                let serializedFlags =
+                    if latestUpdate.HTLCMinimumMSat
+                       <> defaultValues.HTLCMinimumMSat then
+                        deltaWriterStream.Write(
+                            latestUpdate.HTLCMinimumMSat.MilliSatoshi |> uint64,
+                            false
+                        )
 
-            if latestUpdate.FeeBaseMSat <> defaultValues.FeeBaseMSat then
-                serializedFlags <- serializedFlags ||| 0b0001_0000uy
+                        serializedFlags ||| 0b0010_0000uy
+                    else
+                        serializedFlags
 
-                deltaWriterStream.Write(
-                    latestUpdate.FeeBaseMSat.MilliSatoshi |> uint32,
-                    false
-                )
+                let serializedFlags =
+                    if latestUpdate.FeeBaseMSat <> defaultValues.FeeBaseMSat then
+                        deltaWriterStream.Write(
+                            latestUpdate.FeeBaseMSat.MilliSatoshi |> uint32,
+                            false
+                        )
 
-            if latestUpdate.FeeProportionalMillionths
-               <> defaultValues.FeeProportionalMillionths then
-                serializedFlags <- serializedFlags ||| 0b0000_1000uy
+                        serializedFlags ||| 0b0001_0000uy
+                    else
+                        serializedFlags
 
-                deltaWriterStream.Write(
-                    latestUpdate.FeeProportionalMillionths,
-                    false
-                )
+                let serializedFlags =
+                    if latestUpdate.FeeProportionalMillionths
+                       <> defaultValues.FeeProportionalMillionths then
+                        deltaWriterStream.Write(
+                            latestUpdate.FeeProportionalMillionths,
+                            false
+                        )
 
-            if latestUpdate.HTLCMaximumMSat.Value
-               <> defaultValues.HTLCMaximumMSat then
-                serializedFlags <- serializedFlags ||| 0b0000_0100uy
+                        serializedFlags ||| 0b0000_1000uy
+                    else
+                        serializedFlags
 
-                deltaWriterStream.Write(
-                    latestUpdate.HTLCMaximumMSat.Value.MilliSatoshi |> uint64,
-                    false
-                )
-        | UpdateSerializationMechanism.Incremental mutatedProperties ->
-            serializedFlags <- serializedFlags ||| 0b1000_0000uy
+                let serializedFlags =
+                    if latestUpdate.HTLCMaximumMSat.Value
+                       <> defaultValues.HTLCMaximumMSat then
+                        deltaWriterStream.Write(
+                            latestUpdate.HTLCMaximumMSat.Value.MilliSatoshi
+                            |> uint64,
+                            false
+                        )
 
-            if mutatedProperties.CltvExpiryDelta then
-                serializedFlags <- serializedFlags ||| 0b0100_0000uy
+                        serializedFlags ||| 0b0000_0100uy
+                    else
+                        serializedFlags
 
-                deltaWriterStream.Write(
-                    latestUpdate.CLTVExpiryDelta.Value,
-                    false
-                )
+                serializedFlags
+            | UpdateSerializationMechanism.Incremental mutatedProperties ->
+                let serializedFlags = channelFlags ||| 0b1000_0000uy
 
-            if mutatedProperties.HtlcMinimumMSat then
-                serializedFlags <- serializedFlags ||| 0b0010_0000uy
+                let serializedFlags =
+                    if mutatedProperties.CltvExpiryDelta then
+                        deltaWriterStream.Write(
+                            latestUpdate.CLTVExpiryDelta.Value,
+                            false
+                        )
 
-                deltaWriterStream.Write(
-                    latestUpdate.HTLCMinimumMSat.MilliSatoshi |> uint64,
-                    false
-                )
+                        serializedFlags ||| 0b0100_0000uy
+                    else
+                        serializedFlags
 
-            if mutatedProperties.FeeBaseMSat then
-                serializedFlags <- serializedFlags ||| 0b0001_0000uy
+                let serializedFlags =
+                    if mutatedProperties.HtlcMinimumMSat then
+                        deltaWriterStream.Write(
+                            latestUpdate.HTLCMinimumMSat.MilliSatoshi |> uint64,
+                            false
+                        )
 
-                deltaWriterStream.Write(
-                    latestUpdate.FeeBaseMSat.MilliSatoshi |> uint32,
-                    false
-                )
+                        serializedFlags ||| 0b0010_0000uy
+                    else
+                        serializedFlags
 
-            if mutatedProperties.FeeProportionalMillionths then
-                serializedFlags <- serializedFlags ||| 0b0000_1000uy
+                let serializedFlags =
+                    if mutatedProperties.FeeBaseMSat then
+                        deltaWriterStream.Write(
+                            latestUpdate.FeeBaseMSat.MilliSatoshi |> uint32,
+                            false
+                        )
 
-                deltaWriterStream.Write(
-                    latestUpdate.FeeProportionalMillionths,
-                    false
-                )
+                        serializedFlags ||| 0b0001_0000uy
+                    else
+                        serializedFlags
 
-            if mutatedProperties.HtlcMaximumMSat then
-                serializedFlags <- serializedFlags ||| 0b0000_0100uy
+                let serializedFlags =
+                    if mutatedProperties.FeeProportionalMillionths then
+                        deltaWriterStream.Write(
+                            latestUpdate.FeeProportionalMillionths,
+                            false
+                        )
 
-                deltaWriterStream.Write(
-                    latestUpdate.HTLCMaximumMSat.Value.MilliSatoshi |> uint64,
-                    false
-                )
+                        serializedFlags ||| 0b0000_1000uy
+                    else
+                        serializedFlags
+
+                let serializedFlags =
+                    if mutatedProperties.HtlcMaximumMSat then
+                        deltaWriterStream.Write(
+                            latestUpdate.HTLCMaximumMSat.Value.MilliSatoshi
+                            |> uint64,
+                            false
+                        )
+
+                        serializedFlags ||| 0b0000_0100uy
+                    else
+                        serializedFlags
+
+                serializedFlags
 
         use prefixedMemStream = new MemoryStream()
         use prefixedWriterStream = new LightningWriterStream(prefixedMemStream)
