@@ -1009,35 +1009,36 @@ type GossipSnapshotter
 
             let announcements =
                 serializationDetails.Announcements
-                |> Seq.sortBy(fun ann -> ann.ShortChannelId.ToUInt64())
-
-            let mutable previousAnnouncementShortChannelId =
-                ShortChannelId.FromUInt64 0UL
+                |> List.sortBy(fun ann -> ann.ShortChannelId.ToUInt64())
 
             // process announcements
             // write the number of channel announcements to the output
-            for currentAnnouncement in announcements do
-                let idIndex1 = getNodeIdIndex currentAnnouncement.NodeId1
-                let idIndex2 = getNodeIdIndex currentAnnouncement.NodeId2
+            let rec writeAnnouncements
+                (announcements: List<UnsignedChannelAnnouncementMsg>)
+                (previousShortChannelId: ShortChannelId)
+                =
+                match announcements with
+                | currentAnnouncement :: tail ->
+                    let idIndex1 = getNodeIdIndex currentAnnouncement.NodeId1
+                    let idIndex2 = getNodeIdIndex currentAnnouncement.NodeId2
 
-                let strippedAnnouncement =
-                    serializeStrippedChannelAnnouncement
-                        currentAnnouncement
-                        idIndex1
-                        idIndex2
-                        previousAnnouncementShortChannelId
+                    let strippedAnnouncement =
+                        serializeStrippedChannelAnnouncement
+                            currentAnnouncement
+                            idIndex1
+                            idIndex2
+                            previousShortChannelId
 
-                outputMemStream.Write(
-                    strippedAnnouncement,
-                    0,
-                    strippedAnnouncement.Length
-                )
+                    outputMemStream.Write(
+                        strippedAnnouncement,
+                        0,
+                        strippedAnnouncement.Length
+                    )
 
-                previousAnnouncementShortChannelId <-
-                    currentAnnouncement.ShortChannelId
+                    writeAnnouncements tail currentAnnouncement.ShortChannelId
+                | [] -> ()
 
-            let mutable previousUpdateShortChannelId =
-                ShortChannelId.FromUInt64 0UL
+            writeAnnouncements announcements (ShortChannelId.FromUInt64 0UL)
 
             let updateCount = uint32 serializationDetails.Updates.Length
             outputWriter.Write(updateCount, false)
@@ -1069,25 +1070,32 @@ type GossipSnapshotter
 
             let updates =
                 serializationDetails.Updates
-                |> Seq.sortBy(fun update ->
+                |> List.sortBy(fun update ->
                     update.Update.ShortChannelId.ToUInt64()
                 )
 
-            for currentUpdate in updates do
-                let strippedChannelUpdate =
-                    serializeStrippedChannelUpdate
-                        currentUpdate
-                        defaultValues
-                        previousUpdateShortChannelId
+            let rec writeUpdates
+                (updates: List<UpdateSerialization>)
+                (previousShortChannelId: ShortChannelId)
+                =
+                match updates with
+                | currentUpdate :: tail ->
+                    let strippedChannelUpdate =
+                        serializeStrippedChannelUpdate
+                            currentUpdate
+                            defaultValues
+                            previousShortChannelId
 
-                outputMemStream.Write(
-                    strippedChannelUpdate,
-                    0,
-                    strippedChannelUpdate.Length
-                )
+                    outputMemStream.Write(
+                        strippedChannelUpdate,
+                        0,
+                        strippedChannelUpdate.Length
+                    )
 
-                previousUpdateShortChannelId <-
-                    currentUpdate.Update.ShortChannelId
+                    writeUpdates tail currentUpdate.Update.ShortChannelId
+                | [] -> ()
+
+            writeUpdates updates (ShortChannelId.FromUInt64 0UL)
 
             let prefixedOutputMemStream = new MemoryStream()
 
@@ -1160,7 +1168,7 @@ type GossipSnapshotter
                                 (DateTimeUtils.ToUnixTimestamp
                                     referenceTimestamp))
 
-                        let mutable snapshotSyncTimestamps =
+                        let snapshotSyncTimestamps =
                             snapshotSyncDayFactors
                             |> List.map(fun factor ->
                                 let timestamp =
