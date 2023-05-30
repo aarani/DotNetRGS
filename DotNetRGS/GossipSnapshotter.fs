@@ -650,10 +650,8 @@ type GossipSnapshotter
                 Updates = List.Empty
                 FullUpdateDefaults = DefaultUpdateValues.Default
                 LatestSeen = 0u
-                ChainHash = uint256.Zero
+                ChainHash = Constants.ChainHash
             }
-
-        let mutable chainHashSet = false
 
         let fullUpdateHistograms = FullUpdateValueHistograms.Default
 
@@ -704,12 +702,6 @@ type GossipSnapshotter
                     channelDelta.Announcement
                     "channelDelta.Announcement is none, did you forget to run filterDeltaSet?"
 
-            if not chainHashSet then
-                chainHashSet <- true
-
-                serializationSet.ChainHash <-
-                    channelAnnouncementDelta.Announcement.ChainHash
-
             let currentAnnouncementSeen = channelAnnouncementDelta.Seen
             let isNewAnnouncement = currentAnnouncementSeen >= lastSyncTimestamp
 
@@ -721,13 +713,19 @@ type GossipSnapshotter
             let sendAnnouncement =
                 isNewAnnouncement || isNewlyUpdatedAnnouncement
 
-            if sendAnnouncement then
-                serializationSet.LatestSeen <-
-                    max serializationSet.LatestSeen currentAnnouncementSeen
-
-                serializationSet.Announcements <-
-                    channelAnnouncementDelta.Announcement
-                    :: serializationSet.Announcements
+            let serializationSet =
+                if sendAnnouncement then
+                    { serializationSet with
+                        LatestSeen =
+                            max
+                                serializationSet.LatestSeen
+                                currentAnnouncementSeen
+                        Announcements =
+                            channelAnnouncementDelta.Announcement
+                            :: serializationSet.Announcements
+                    }
+                else
+                    serializationSet
 
             let directionAUpdates, directionBUpdates = channelDelta.Updates
 
@@ -788,31 +786,31 @@ type GossipSnapshotter
             categorizeDirectedUpdateSerialization directionAUpdates
             categorizeDirectedUpdateSerialization directionBUpdates
 
-        serializationSet.FullUpdateDefaults <-
-            {
-                CLTVExpiryDelta =
-                    Histogram.findMostCommonHistogramEntryWithDefault
-                        fullUpdateHistograms.CLTVExpiryDelta
-                        BlockHeightOffset16.Zero
-                HTLCMinimumMSat =
-                    Histogram.findMostCommonHistogramEntryWithDefault
-                        fullUpdateHistograms.HTLCMinimumMSat
-                        LNMoney.Zero
-                FeeBaseMSat =
-                    Histogram.findMostCommonHistogramEntryWithDefault
-                        fullUpdateHistograms.FeeBaseMSat
-                        LNMoney.Zero
-                FeeProportionalMillionths =
-                    Histogram.findMostCommonHistogramEntryWithDefault
-                        fullUpdateHistograms.FeeProportionalMillionths
-                        0u
-                HTLCMaximumMSat =
-                    Histogram.findMostCommonHistogramEntryWithDefault
-                        fullUpdateHistograms.HTLCMaximumMSat
-                        LNMoney.Zero
-            }
-
-        serializationSet
+        { serializationSet with
+            FullUpdateDefaults =
+                {
+                    CLTVExpiryDelta =
+                        Histogram.findMostCommonHistogramEntryWithDefault
+                            fullUpdateHistograms.CLTVExpiryDelta
+                            BlockHeightOffset16.Zero
+                    HTLCMinimumMSat =
+                        Histogram.findMostCommonHistogramEntryWithDefault
+                            fullUpdateHistograms.HTLCMinimumMSat
+                            LNMoney.Zero
+                    FeeBaseMSat =
+                        Histogram.findMostCommonHistogramEntryWithDefault
+                            fullUpdateHistograms.FeeBaseMSat
+                            LNMoney.Zero
+                    FeeProportionalMillionths =
+                        Histogram.findMostCommonHistogramEntryWithDefault
+                            fullUpdateHistograms.FeeProportionalMillionths
+                            0u
+                    HTLCMaximumMSat =
+                        Histogram.findMostCommonHistogramEntryWithDefault
+                            fullUpdateHistograms.HTLCMaximumMSat
+                            LNMoney.Zero
+                }
+        }
 
     let serializeStrippedChannelAnnouncement
         (announcement: UnsignedChannelAnnouncementMsg)

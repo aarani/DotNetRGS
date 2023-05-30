@@ -39,7 +39,7 @@ type internal GossipSyncer
                 PeerNode.Connect
                     throwawayPrivKey
                     peer
-                    Currency.BTC
+                    Constants.Currency
                     Money.Zero
                     ConnectionPurpose.Routing
 
@@ -48,7 +48,7 @@ type internal GossipSyncer
                 | Ok node -> node
                 | Error e -> failwith "connecting to peer failed"
 
-            let chainHash = Network.Main.GenesisHash
+            let chainHash = Constants.ChainHash
 
             let recvMsg msgStream =
                 async {
@@ -235,8 +235,7 @@ type internal GossipSyncer
 
                     let gossipTimeStampFilter =
                         {
-                            GossipTimestampFilterMsg.ChainHash =
-                                Network.Main.GenesisHash
+                            GossipTimestampFilterMsg.ChainHash = chainHash
                             FirstTimestamp = firstTimestamp
                             TimestampRange = UInt32.MaxValue
                         }
