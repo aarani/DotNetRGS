@@ -653,138 +653,231 @@ type GossipSnapshotter
                 ChainHash = Constants.ChainHash
             }
 
-        let fullUpdateHistograms = FullUpdateValueHistograms.Default
+        let rec readChannelDelta
+            (channelDeltas: List<ShortChannelId * ChannelDelta>)
+            (serializationSet: SerializationSet)
+            (fullUpdateHistograms: FullUpdateValueHistograms)
+            =
+            match channelDeltas with
+            | (_scId, channelDelta) :: tail ->
+                let channelAnnouncementDelta =
+                    UnwrapOption
+                        channelDelta.Announcement
+                        "channelDelta.Announcement is none, did you forget to run filterDeltaSet?"
 
-        let recordFullUpdateInHistograms(fullUpdate: UnsignedChannelUpdateMsg) =
-            fullUpdateHistograms.CLTVExpiryDelta <-
-                fullUpdateHistograms.CLTVExpiryDelta
-                |> Map.change
-                    fullUpdate.CLTVExpiryDelta
-                    (fun previousValue ->
-                        Some((Option.defaultValue 0u previousValue) + 1u)
-                    )
+                let currentAnnouncementSeen = channelAnnouncementDelta.Seen
 
-            fullUpdateHistograms.HTLCMinimumMSat <-
-                fullUpdateHistograms.HTLCMinimumMSat
-                |> Map.change
-                    fullUpdate.HTLCMinimumMSat
-                    (fun previousValue ->
-                        Some((Option.defaultValue 0u previousValue) + 1u)
-                    )
+                let isNewAnnouncement =
+                    currentAnnouncementSeen >= lastSyncTimestamp
 
-            fullUpdateHistograms.FeeBaseMSat <-
-                fullUpdateHistograms.FeeBaseMSat
-                |> Map.change
-                    fullUpdate.FeeBaseMSat
-                    (fun previousValue ->
-                        Some((Option.defaultValue 0u previousValue) + 1u)
-                    )
+                let isNewlyUpdatedAnnouncement =
+                    match channelDelta.FirstUpdateSeen with
+                    | Some firstUpdateSeen ->
+                        firstUpdateSeen >= lastSyncTimestamp
+                    | None -> false
 
-            fullUpdateHistograms.FeeProportionalMillionths <-
-                fullUpdateHistograms.FeeProportionalMillionths
-                |> Map.change
-                    fullUpdate.FeeProportionalMillionths
-                    (fun previousValue ->
-                        Some((Option.defaultValue 0u previousValue) + 1u)
-                    )
+                let sendAnnouncement =
+                    isNewAnnouncement || isNewlyUpdatedAnnouncement
 
-            fullUpdateHistograms.HTLCMaximumMSat <-
-                fullUpdateHistograms.HTLCMaximumMSat
-                |> Map.change
-                    fullUpdate.HTLCMaximumMSat.Value
-                    (fun previousValue ->
-                        Some((Option.defaultValue 0u previousValue) + 1u)
-                    )
+                let serializationSet =
+                    if sendAnnouncement then
+                        { serializationSet with
+                            LatestSeen =
+                                max
+                                    serializationSet.LatestSeen
+                                    currentAnnouncementSeen
+                            Announcements =
+                                channelAnnouncementDelta.Announcement
+                                :: serializationSet.Announcements
+                        }
+                    else
+                        serializationSet
 
-        for (_scId, channelDelta) in deltaSet |> Map.toSeq do
-            let channelAnnouncementDelta =
-                UnwrapOption
-                    channelDelta.Announcement
-                    "channelDelta.Announcement is none, did you forget to run filterDeltaSet?"
+                let directionAUpdates, directionBUpdates = channelDelta.Updates
 
-            let currentAnnouncementSeen = channelAnnouncementDelta.Seen
-            let isNewAnnouncement = currentAnnouncementSeen >= lastSyncTimestamp
+                let categorizeDirectedUpdateSerialization
+                    (directedUpdates: Option<DirectedUpdateDelta>)
+                    (serializationSet: SerializationSet)
+                    (fullUpdateHistograms: FullUpdateValueHistograms)
+                    =
+                    let recordFullUpdateInHistograms
+                        (fullUpdate: UnsignedChannelUpdateMsg)
+                        (fullUpdateHistograms: FullUpdateValueHistograms)
+                        =
+                        let fullUpdateHistograms =
+                            { fullUpdateHistograms with
+                                CLTVExpiryDelta =
+                                    fullUpdateHistograms.CLTVExpiryDelta
+                                    |> Map.change
+                                        fullUpdate.CLTVExpiryDelta
+                                        (fun previousValue ->
+                                            Some(
+                                                (Option.defaultValue
+                                                    0u
+                                                    previousValue)
+                                                + 1u
+                                            )
+                                        )
+                            }
 
-            let isNewlyUpdatedAnnouncement =
-                match channelDelta.FirstUpdateSeen with
-                | Some firstUpdateSeen -> firstUpdateSeen >= lastSyncTimestamp
-                | None -> false
+                        let fullUpdateHistograms =
+                            { fullUpdateHistograms with
+                                HTLCMinimumMSat =
+                                    fullUpdateHistograms.HTLCMinimumMSat
+                                    |> Map.change
+                                        fullUpdate.HTLCMinimumMSat
+                                        (fun previousValue ->
+                                            Some(
+                                                (Option.defaultValue
+                                                    0u
+                                                    previousValue)
+                                                + 1u
+                                            )
+                                        )
+                            }
 
-            let sendAnnouncement =
-                isNewAnnouncement || isNewlyUpdatedAnnouncement
+                        let fullUpdateHistograms =
+                            { fullUpdateHistograms with
+                                FeeBaseMSat =
+                                    fullUpdateHistograms.FeeBaseMSat
+                                    |> Map.change
+                                        fullUpdate.FeeBaseMSat
+                                        (fun previousValue ->
+                                            Some(
+                                                (Option.defaultValue
+                                                    0u
+                                                    previousValue)
+                                                + 1u
+                                            )
+                                        )
+                            }
 
-            let serializationSet =
-                if sendAnnouncement then
-                    { serializationSet with
-                        LatestSeen =
-                            max
-                                serializationSet.LatestSeen
-                                currentAnnouncementSeen
-                        Announcements =
-                            channelAnnouncementDelta.Announcement
-                            :: serializationSet.Announcements
-                    }
-                else
-                    serializationSet
+                        let fullUpdateHistograms =
+                            { fullUpdateHistograms with
+                                FeeProportionalMillionths =
+                                    fullUpdateHistograms.FeeProportionalMillionths
+                                    |> Map.change
+                                        fullUpdate.FeeProportionalMillionths
+                                        (fun previousValue ->
+                                            Some(
+                                                (Option.defaultValue
+                                                    0u
+                                                    previousValue)
+                                                + 1u
+                                            )
+                                        )
+                            }
 
-            let directionAUpdates, directionBUpdates = channelDelta.Updates
+                        let fullUpdateHistograms =
+                            { fullUpdateHistograms with
+                                HTLCMaximumMSat =
+                                    fullUpdateHistograms.HTLCMaximumMSat
+                                    |> Map.change
+                                        fullUpdate.HTLCMaximumMSat.Value
+                                        (fun previousValue ->
+                                            Some(
+                                                (Option.defaultValue
+                                                    0u
+                                                    previousValue)
+                                                + 1u
+                                            )
+                                        )
+                            }
 
-            let categorizeDirectedUpdateSerialization
-                (directedUpdates: Option<DirectedUpdateDelta>)
-                =
-                match directedUpdates with
-                | Some updates ->
-                    match updates.LastUpdateAfterSeen with
-                    | Some latestUpdateDelta ->
-                        let latestUpdate = latestUpdateDelta.Update
+                        fullUpdateHistograms
 
-                        serializationSet.LatestSeen <-
-                            max
-                                serializationSet.LatestSeen
-                                latestUpdateDelta.Seen
+                    match directedUpdates with
+                    | Some updates ->
+                        match updates.LastUpdateAfterSeen with
+                        | Some latestUpdateDelta ->
+                            let latestUpdate = latestUpdateDelta.Update
 
-                        if updates.LastUpdateBeforeSeen.IsSome then
-                            let mutatedProperties = updates.MutatedProperties
-
-                            if mutatedProperties.Length() = 5 then
-                                // All five values have changed, it makes more sense to just
-                                // serialize the update as a full update instead of as a change
-                                // this way, the default values can be computed more efficiently
-                                recordFullUpdateInHistograms latestUpdate
-
-                                serializationSet.Updates <-
-                                    {
-                                        Update = latestUpdate
-                                        Mechanism =
-                                            UpdateSerializationMechanism.Full
-                                    }
-                                    :: serializationSet.Updates
-                            elif mutatedProperties.Length() > 0
-                                 || mutatedProperties.Flags then
-                                // We don't count flags as mutated properties
-                                serializationSet.Updates <-
-                                    {
-                                        Update = latestUpdate
-                                        Mechanism =
-                                            UpdateSerializationMechanism.Incremental
-                                                mutatedProperties
-                                    }
-                                    :: serializationSet.Updates
-                        else
-                            recordFullUpdateInHistograms latestUpdate
-
-                            serializationSet.Updates <-
-                                {
-                                    Update = latestUpdate
-                                    Mechanism =
-                                        UpdateSerializationMechanism.Full
+                            let serializationSet =
+                                { serializationSet with
+                                    LatestSeen =
+                                        max
+                                            serializationSet.LatestSeen
+                                            latestUpdateDelta.Seen
                                 }
-                                :: serializationSet.Updates
-                    | None -> ()
-                | None -> ()
 
-            categorizeDirectedUpdateSerialization directionAUpdates
-            categorizeDirectedUpdateSerialization directionBUpdates
+                            if updates.LastUpdateBeforeSeen.IsSome then
+                                let mutatedProperties =
+                                    updates.MutatedProperties
+
+                                if mutatedProperties.Length() = 5 then
+                                    // All five values have changed, it makes more sense to just
+                                    // serialize the update as a full update instead of as a change
+                                    // this way, the default values can be computed more efficiently
+                                    let fullUpdateHistograms =
+                                        recordFullUpdateInHistograms
+                                            latestUpdate
+                                            fullUpdateHistograms
+
+                                    { serializationSet with
+                                        Updates =
+                                            {
+                                                Update = latestUpdate
+                                                Mechanism =
+                                                    UpdateSerializationMechanism.Full
+                                            }
+                                            :: serializationSet.Updates
+                                    },
+                                    fullUpdateHistograms
+                                elif mutatedProperties.Length() > 0
+                                     || mutatedProperties.Flags then
+                                    // We don't count flags as mutated properties
+                                    { serializationSet with
+                                        Updates =
+                                            {
+                                                Update = latestUpdate
+                                                Mechanism =
+                                                    UpdateSerializationMechanism.Incremental
+                                                        mutatedProperties
+                                            }
+                                            :: serializationSet.Updates
+                                    },
+                                    fullUpdateHistograms
+                                else
+                                    serializationSet, fullUpdateHistograms
+                            else
+                                let fullUpdateHistograms =
+                                    recordFullUpdateInHistograms
+                                        latestUpdate
+                                        fullUpdateHistograms
+
+                                { serializationSet with
+                                    Updates =
+                                        {
+                                            Update = latestUpdate
+                                            Mechanism =
+                                                UpdateSerializationMechanism.Full
+                                        }
+                                        :: serializationSet.Updates
+                                },
+                                fullUpdateHistograms
+                        | None -> serializationSet, fullUpdateHistograms
+                    | None -> serializationSet, fullUpdateHistograms
+
+                let serializationSet, fullUpdateHistograms =
+                    categorizeDirectedUpdateSerialization
+                        directionAUpdates
+                        serializationSet
+                        fullUpdateHistograms
+
+                let serializationSet, fullUpdateHistograms =
+                    categorizeDirectedUpdateSerialization
+                        directionBUpdates
+                        serializationSet
+                        fullUpdateHistograms
+
+                readChannelDelta tail serializationSet fullUpdateHistograms
+            | [] -> serializationSet, fullUpdateHistograms
+
+        let serializationSet, fullUpdateHistograms =
+            readChannelDelta
+                (deltaSet |> Map.toList)
+                serializationSet
+                FullUpdateValueHistograms.Default
 
         { serializationSet with
             FullUpdateDefaults =
