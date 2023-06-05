@@ -78,20 +78,34 @@ type NetworkGraph(dataDir: DirectoryInfo) =
 
 
     let mutable channels: Map<ShortChannelId, ChannelInfo> = Map.empty
+    let mutable removedChannels: Map<ShortChannelId, DateTime> = Map.empty
     let channelsLock = obj()
+
+    let channelsFilePath = Path.Combine(dataDir.FullName, "channels.json")
+
+    let removedChannelsFilePath =
+        Path.Combine(dataDir.FullName, "removed_channels.json")
 
     do
         if not dataDir.Exists then
             dataDir.Create()
 
-        let channelsFile = Path.Combine(dataDir.FullName, "channels.json")
-
-        if File.Exists channelsFile then
-            let channelsJson = File.ReadAllText channelsFile
+        if File.Exists channelsFilePath then
+            let channelsJson = File.ReadAllText channelsFilePath
 
             channels <-
                 JsonConvert.DeserializeObject<List<ShortChannelId * ChannelInfo>>(
                     channelsJson,
+                    serializationSettings
+                )
+                |> Map.ofList
+
+        if File.Exists removedChannelsFilePath then
+            let removedChannelsJson = File.ReadAllText removedChannelsFilePath
+
+            removedChannels <-
+                JsonConvert.DeserializeObject<List<ShortChannelId * DateTime>>(
+                    removedChannelsJson,
                     serializationSettings
                 )
                 |> Map.ofList
@@ -114,7 +128,12 @@ type NetworkGraph(dataDir: DirectoryInfo) =
                     false
                 else
                     true
-            | false, _ -> true
+            | false, _ ->
+                if removedChannels |> Map.containsKey ann.ShortChannelId then
+                    // We recently removed this channel
+                    false
+                else
+                    true
         finally
             Monitor.Exit channelsLock
 
@@ -276,10 +295,9 @@ type NetworkGraph(dataDir: DirectoryInfo) =
         let minUpdateDateTime = DateTime.UtcNow.Subtract(TimeSpan.FromDays 14.)
         let minUpdateTimestamp = DateTimeUtils.ToUnixTimestamp minUpdateDateTime
 
-        channels <-
+        let aliveChannels, prunedChannels =
             channels
-            |> Map.toSeq
-            |> Seq.choose(fun (shortChannelId, info) ->
+            |> Map.partition(fun _scId info ->
                 let info =
                     if info.Forward.IsSome
                        && info.Forward.Value.Timestamp < minUpdateTimestamp then
@@ -303,13 +321,36 @@ type NetworkGraph(dataDir: DirectoryInfo) =
                     // announcements that we just received and are just waiting for our peer to send a
                     // channel_update for.
                     if info.AnnouncementReceivedTime < minUpdateDateTime then
-                        None
+                        false
                     else
-                        Some(shortChannelId, info)
+                        true
                 else
-                    Some(shortChannelId, info)
+                    true
             )
-            |> Map.ofSeq
+
+        channels <- aliveChannels
+
+        let removedChannelsWithTimestamp =
+            prunedChannels |> Map.map(fun _scId _info -> DateTime.UtcNow)
+
+        removedChannels <-
+            Map.fold
+                (fun removedChannels scId _info ->
+                    removedChannels |> Map.add scId DateTime.UtcNow
+                )
+                removedChannels
+                prunedChannels
+            |> Map.filter(fun _scId removalTime ->
+                DateTime.UtcNow - removalTime < TimeSpan.FromDays 14.
+            )
+
+    member internal self.RemoveStaleChannels() =
+        Monitor.Enter channelsLock
+
+        try
+            self.UnsafeRemoveStaleChannels()
+        finally
+            Monitor.Exit channelsLock
 
     member _.GetChannelIds() =
         let keys(map: Map<'K, 'V>) =
@@ -329,13 +370,28 @@ type NetworkGraph(dataDir: DirectoryInfo) =
         Monitor.Enter channelsLock
 
         try
+            // Prune stale channels and update removed channels list
             self.UnsafeRemoveStaleChannels()
-            let channelsFile = Path.Combine(dataDir.FullName, "channels.json")
+
+            // Serialize channels list
             let channelsList = channels |> Map.toList
 
             let channelsJson =
                 JsonConvert.SerializeObject(channelsList, serializationSettings)
 
-            File.WriteAllText(channelsFile, channelsJson)
+            File.WriteAllText(channelsFilePath, channelsJson)
+
+            // Serialize removed channels list
+
+            let removedChannelsList = removedChannels |> Map.toList
+
+            let removedChannelsJson =
+                JsonConvert.SerializeObject(
+                    removedChannelsList,
+                    serializationSettings
+                )
+
+            File.WriteAllText(removedChannelsFilePath, removedChannelsJson)
+
         finally
             Monitor.Exit channelsLock

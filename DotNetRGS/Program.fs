@@ -25,6 +25,7 @@ module Program =
                     .Build()
 
             let graph = NetworkGraph()
+            graph.RemoveStaleChannels()
 
             let blockOption = DataflowBlockOptions()
 
