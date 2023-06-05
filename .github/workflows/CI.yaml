@@ -42,4 +42,6 @@ jobs:
       - name: Restore dependencies
         run: nuget restore ./DotNetRGS/DotNetRGS.fsproj
       - name: Build
-        run: msbuild ./DotNetRGS/DotNetRGS.fsproj /p:Configuration=Release
+        run: |
+          mkdir buildOutput
+          msbuild ./DotNetRGS/DotNetRGS.fsproj /p:Configuration=Release;OutputPath=buildOutput/
