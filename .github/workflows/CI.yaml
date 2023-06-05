@@ -50,9 +50,7 @@ jobs:
           zip -r dotnet-rgs-server.zip *
           # is this needed?
           cd ../../../../
-      - name: Upload build artifacts
-      - name: Upload a Build Artifact
-        uses: actions/upload-artifact@v3.1.2
+      - uses: actions/upload-artifact@v3.1.2
         with:
           name: dotnet-rgs-server.zip
           path: DotNetRGS/bin/Release/net472/dotnet-rgs-server.zip
