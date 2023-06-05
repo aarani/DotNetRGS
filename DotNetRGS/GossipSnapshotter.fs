@@ -531,7 +531,10 @@ type GossipSnapshotter
                                                             updateMsg.Contents
                                                     }
 
-                                        else
+                                        else if
+                                            direction
+                                            && not(snd previouslySeenDirections)
+                                        then
                                             previouslySeenDirections <-
                                                 fst previouslySeenDirections,
                                                 true
