@@ -43,3 +43,40 @@ jobs:
         run: nuget restore ./DotNetRGS/DotNetRGS.fsproj
       - name: Build
         run: msbuild ./DotNetRGS/DotNetRGS.fsproj /p:Configuration=Release
+      - name: Archive the build output
+        run: |
+          sudo apt install --yes zip
+          cd DotNetRGS/bin/Release/net472
+          zip -r dotnet-rgs-server.zip *
+          # is this needed?
+          cd ../../../../
+      - name: Upload as build artifact
+        uses: actions/upload-artifact@v3.1.2
+        with:
+          name: dotnet-rgs-server.zip
+          path: DotNetRGS/bin/Release/net472/dotnet-rgs-server.zip
+
+      - name: Create Release
+        id: create_release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          body: DotNetRGS
+          draft: false
+          prerelease: true
+
+      - name: Upload Server As Release Asset
+        id: upload-server-asset 
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./DotNetRGS/bin/Release/net472/dotnet-rgs-server.zip
+          asset_name: dotnet-rgs-server.zip
+          asset_content_type: application/zip
