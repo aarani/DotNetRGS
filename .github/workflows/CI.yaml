@@ -42,6 +42,20 @@ jobs:
       - name: Restore dependencies
         run: nuget restore ./DotNetRGS/DotNetRGS.fsproj
       - name: Build
+        run: msbuild ./DotNetRGS/DotNetRGS.fsproj /p:Configuration=Release
+      - name: Archive the build output
         run: |
-          mkdir buildOutput
-          msbuild ./DotNetRGS/DotNetRGS.fsproj /p:Configuration=Release;OutputPath=buildOutput/
+          sudo apt install --yes zip
+          cd DotNetRGS/bin/Release/net472
+          zip -r dotnet-rgs-server.zip *
+          # is this needed?
+          cd ../../../../
+      - name: Upload build artifacts
+      - name: Upload a Build Artifact
+        uses: actions/upload-artifact@v3.1.2
+        with:
+          name: dotnet-rgs-server.zip
+          path: DotNetRGS/bin/Release/net472/dotnet-rgs-server.zip
+
+      
+       
