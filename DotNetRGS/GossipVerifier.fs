@@ -42,7 +42,7 @@ type internal GossipVerifier
                         |> Async.AwaitTask
                         |> Async.Ignore
 
-                    if graph.ValidateChannelAnnouncement channelAnn.Contents then
+                    if graph.AnnouncementIsDuplicate channelAnn.Contents |> not then
                         let hasValidSigs =
                             let hash =
                                 channelAnn.Contents.ToBytes()
@@ -87,52 +87,59 @@ type internal GossipVerifier
                                     txOutIndex)
 
 #if !DEBUG
-                            let! txId =
-                                Server.Query
-                                    Currency.BTC
-                                    (QuerySettings.Default
-                                        ServerSelectionMode.Fast)
-                                    (ElectrumClient.GetBlockchainTransactionIdFromPos
-                                        blockHeight
-                                        blockIndex)
-                                    None
-
-                            let! transaction =
-                                Server.Query
-                                    Currency.BTC
-                                    (QuerySettings.Default
-                                        ServerSelectionMode.Fast)
-                                    (ElectrumClient.GetBlockchainTransaction
-                                        txId)
-                                    None
-
-                            let transaction =
-                                Transaction.Parse(transaction, network)
-
-                            let redeem =
-                                Scripts.funding
-                                    (FundingPubKey
-                                        channelAnn.Contents.BitcoinKey1.Value)
-                                    (FundingPubKey
-                                        channelAnn.Contents.BitcoinKey2.Value)
-
-                            let outputOpt =
-                                transaction.Outputs
-                                |> Seq.tryItem(int txOutIndex)
-
-                            match outputOpt with
-                            | Some output when
-                                output.IsTo(redeem.WitHash :> IDestination)
-                                ->
-                                do! saveChannelAnn(Some output.Value)
-                            | Some _ ->
-                                Logger.Log
-                                    "GossipVerifier"
-                                    "Channel announcement key didn't match on-chain script"
+                            match
+                                graph.IsAlreadyVerifiedButWasPruned
+                                    channelAnn.Contents
+                                with
                             | None ->
-                                Logger.Log
-                                    "GossipVerifier"
-                                    "Output index out of bounds in transaction"
+                                let! txId =
+                                    Server.Query
+                                        Currency.BTC
+                                        (QuerySettings.Default
+                                            ServerSelectionMode.Fast)
+                                        (ElectrumClient.GetBlockchainTransactionIdFromPos
+                                            blockHeight
+                                            blockIndex)
+                                        None
+
+                                let! transaction =
+                                    Server.Query
+                                        Currency.BTC
+                                        (QuerySettings.Default
+                                            ServerSelectionMode.Fast)
+                                        (ElectrumClient.GetBlockchainTransaction
+                                            txId)
+                                        None
+
+                                let transaction =
+                                    Transaction.Parse(transaction, network)
+
+                                let redeem =
+                                    Scripts.funding
+                                        (FundingPubKey
+                                            channelAnn.Contents.BitcoinKey1.Value)
+                                        (FundingPubKey
+                                            channelAnn.Contents.BitcoinKey2.Value)
+
+                                let outputOpt =
+                                    transaction.Outputs
+                                    |> Seq.tryItem(int txOutIndex)
+
+                                match outputOpt with
+                                | Some output when
+                                    output.IsTo(redeem.WitHash :> IDestination)
+                                    ->
+                                    do! saveChannelAnn(Some output.Value)
+                                | Some _ ->
+                                    Logger.Log
+                                        "GossipVerifier"
+                                        "Channel announcement key didn't match on-chain script"
+                                | None ->
+                                    Logger.Log
+                                        "GossipVerifier"
+                                        "Output index out of bounds in transaction"
+                            | Some prunedChannelInfo ->
+                                do! saveChannelAnn prunedChannelInfo.Capacity
 #else
                             do! saveChannelAnn None
 #endif

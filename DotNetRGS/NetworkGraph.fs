@@ -78,13 +78,17 @@ type NetworkGraph(dataDir: DirectoryInfo) =
 
 
     let mutable channels: Map<ShortChannelId, ChannelInfo> = Map.empty
+    let mutable prunedChannels: Map<ShortChannelId, ChannelInfo> = Map.empty
     let channelsLock = obj()
+
+    let channelsFile = Path.Combine(dataDir.FullName, "channels.json")
+
+    let prunedChannelsFile =
+        Path.Combine(dataDir.FullName, "prunedChannels.json")
 
     do
         if not dataDir.Exists then
             dataDir.Create()
-
-        let channelsFile = Path.Combine(dataDir.FullName, "channels.json")
 
         if File.Exists channelsFile then
             let channelsJson = File.ReadAllText channelsFile
@@ -96,6 +100,16 @@ type NetworkGraph(dataDir: DirectoryInfo) =
                 )
                 |> Map.ofList
 
+        if File.Exists prunedChannelsFile then
+            let prunedChannelsJson = File.ReadAllText prunedChannelsFile
+
+            channels <-
+                JsonConvert.DeserializeObject<List<ShortChannelId * ChannelInfo>>(
+                    prunedChannelsJson,
+                    serializationSettings
+                )
+                |> Map.ofList
+
     new() =
         let configPath =
             Environment.GetFolderPath Environment.SpecialFolder.ApplicationData
@@ -103,7 +117,7 @@ type NetworkGraph(dataDir: DirectoryInfo) =
         let path = Path.Combine(configPath, "DotNetRGS") |> DirectoryInfo
         NetworkGraph path
 
-    member __.ValidateChannelAnnouncement(ann: UnsignedChannelAnnouncementMsg) =
+    member __.AnnouncementIsDuplicate(ann: UnsignedChannelAnnouncementMsg) =
         Monitor.Enter channelsLock
 
         try
@@ -111,10 +125,27 @@ type NetworkGraph(dataDir: DirectoryInfo) =
             | true, channel ->
                 if channel.NodeOne = ann.NodeId1
                    && channel.NodeTwo = ann.NodeId2 then
-                    false
-                else
                     true
-            | false, _ -> true
+                else
+                    false
+            | false, _ -> false
+        finally
+            Monitor.Exit channelsLock
+
+    member __.IsAlreadyVerifiedButWasPruned
+        (ann: UnsignedChannelAnnouncementMsg)
+        =
+        Monitor.Enter channelsLock
+
+        try
+            match prunedChannels.TryGetValue ann.ShortChannelId with
+            | true, channel ->
+                if channel.NodeOne = ann.NodeId1
+                   && channel.NodeTwo = ann.NodeId2 then
+                    Some channel
+                else
+                    None
+            | false, _ -> None
         finally
             Monitor.Exit channelsLock
 
@@ -276,10 +307,9 @@ type NetworkGraph(dataDir: DirectoryInfo) =
         let minUpdateDateTime = DateTime.UtcNow.Subtract(TimeSpan.FromDays 14.)
         let minUpdateTimestamp = DateTimeUtils.ToUnixTimestamp minUpdateDateTime
 
-        channels <-
+        let aliveChannels, shouldBePrunedChannels =
             channels
-            |> Map.toSeq
-            |> Seq.choose(fun (shortChannelId, info) ->
+            |> Map.partition(fun _scId info ->
                 let info =
                     if info.Forward.IsSome
                        && info.Forward.Value.Timestamp < minUpdateTimestamp then
@@ -303,13 +333,20 @@ type NetworkGraph(dataDir: DirectoryInfo) =
                     // announcements that we just received and are just waiting for our peer to send a
                     // channel_update for.
                     if info.AnnouncementReceivedTime < minUpdateDateTime then
-                        None
+                        false
                     else
-                        Some(shortChannelId, info)
+                        true
                 else
-                    Some(shortChannelId, info)
+                    true
             )
-            |> Map.ofSeq
+
+        channels <- aliveChannels
+
+        prunedChannels <-
+            Map.fold
+                (fun acc key value -> Map.add key value acc)
+                aliveChannels
+                shouldBePrunedChannels
 
     member _.GetChannelIds() =
         let keys(map: Map<'K, 'V>) =
@@ -330,12 +367,20 @@ type NetworkGraph(dataDir: DirectoryInfo) =
 
         try
             self.UnsafeRemoveStaleChannels()
-            let channelsFile = Path.Combine(dataDir.FullName, "channels.json")
             let channelsList = channels |> Map.toList
 
             let channelsJson =
                 JsonConvert.SerializeObject(channelsList, serializationSettings)
 
+            let prunedChannelsList = prunedChannels |> Map.toList
+
+            let prunedChannelsJson =
+                JsonConvert.SerializeObject(
+                    prunedChannelsList,
+                    serializationSettings
+                )
+
             File.WriteAllText(channelsFile, channelsJson)
+            File.WriteAllText(prunedChannelsFile, prunedChannelsJson)
         finally
             Monitor.Exit channelsLock
