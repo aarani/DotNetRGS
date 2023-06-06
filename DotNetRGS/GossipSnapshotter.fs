@@ -564,15 +564,11 @@ type GossipSnapshotter
                                                 previouslySeenDirections,
                                                 updateDelta
 
-
-                                        let lastSeenUpdate =
-                                            updateDelta.LastUpdateBeforeSeen
-
                                         let updateDelta =
-                                            if lastSeenUpdate.IsSome then
-                                                let lastSeenUpdate =
-                                                    lastSeenUpdate.Value
-
+                                            match
+                                                updateDelta.LastUpdateBeforeSeen
+                                                with
+                                            | Some lastSeenUpdate ->
                                                 { updateDelta with
                                                     MutatedProperties =
                                                         { MutatedProperties.Default with
@@ -596,8 +592,7 @@ type GossipSnapshotter
                                                                 <> lastSeenUpdate.HTLCMaximumMSat
                                                         }
                                                 }
-                                            else
-                                                updateDelta
+                                            | None -> updateDelta
 
                                         let channelDelta =
                                             if not direction then
