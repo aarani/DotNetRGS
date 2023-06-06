@@ -454,13 +454,12 @@ type GossipSnapshotter
 
                     use reader = readCommand.ExecuteReader()
 
-                    let mutable previousShortChannelId =
-                        ShortChannelId.FromUInt64 UInt64.MaxValue
-
-                    let mutable previouslySeenDirections = false, false
-
                     if reader.HasRows then
-                        let rec readRow(deltaSet: DeltaSet) =
+                        let rec readRow
+                            (previousShortChannelId: ShortChannelId)
+                            (previouslySeenDirections: bool * bool)
+                            (deltaSet: DeltaSet)
+                            =
                             async {
                                 let readResult = reader.Read()
 
@@ -470,7 +469,11 @@ type GossipSnapshotter
                                         |> reader.GetInt32
 
                                     if referenceIds.Contains updateId then
-                                        return! readRow deltaSet
+                                        return!
+                                            readRow
+                                                previousShortChannelId
+                                                previouslySeenDirections
+                                                deltaSet
                                     else
                                         let direction =
                                             reader.GetOrdinal "direction"
@@ -484,11 +487,13 @@ type GossipSnapshotter
                                         let scId =
                                             updateMsg.Contents.ShortChannelId
 
-                                        if previousShortChannelId <> scId then
-                                            previousShortChannelId <- scId
-
-                                            previouslySeenDirections <-
-                                                false, false
+                                        let (previousShortChannelId,
+                                             previouslySeenDirections) =
+                                            if previousShortChannelId <> scId then
+                                                scId, (false, false)
+                                            else
+                                                previousShortChannelId,
+                                                previouslySeenDirections
 
                                         let currentSeenTimestamp =
                                             reader.GetOrdinal "seen"
@@ -513,40 +518,60 @@ type GossipSnapshotter
                                                 |> Option.defaultValue
                                                     DirectedUpdateDelta.Default
 
-                                        if
-                                            not direction
-                                            && not(fst previouslySeenDirections)
-                                        then
-                                            previouslySeenDirections <-
-                                                true,
-                                                snd previouslySeenDirections
+                                        let (previouslySeenDirections,
+                                             updateDelta) =
+                                            if
+                                                not direction
+                                                && not
+                                                    (
+                                                        fst
+                                                            previouslySeenDirections
+                                                    )
+                                            then
+                                                let previouslySeenDirections =
+                                                    true,
+                                                    snd previouslySeenDirections
 
-                                            updateDelta.LastUpdateAfterSeen <-
-                                                Some
-                                                    {
-                                                        Seen =
-                                                            DateTimeUtils.ToUnixTimestamp
-                                                                currentSeenTimestamp
-                                                        Update =
-                                                            updateMsg.Contents
-                                                    }
-                                        elif
-                                            direction
-                                            && not(snd previouslySeenDirections)
-                                        then
-                                            previouslySeenDirections <-
-                                                fst previouslySeenDirections,
-                                                true
+                                                previouslySeenDirections,
+                                                { updateDelta with
+                                                    LastUpdateAfterSeen =
+                                                        Some
+                                                            {
+                                                                Seen =
+                                                                    DateTimeUtils.ToUnixTimestamp
+                                                                        currentSeenTimestamp
+                                                                Update =
+                                                                    updateMsg.Contents
+                                                            }
+                                                }
+                                            elif
+                                                direction
+                                                && not
+                                                    (
+                                                        snd
+                                                            previouslySeenDirections
+                                                    )
+                                            then
+                                                let previouslySeenDirections =
+                                                    fst previouslySeenDirections,
+                                                    true
 
-                                            updateDelta.LastUpdateAfterSeen <-
-                                                Some
-                                                    {
-                                                        Seen =
-                                                            DateTimeUtils.ToUnixTimestamp
-                                                                currentSeenTimestamp
-                                                        Update =
-                                                            updateMsg.Contents
-                                                    }
+                                                previouslySeenDirections,
+                                                { updateDelta with
+                                                    LastUpdateAfterSeen =
+                                                        Some
+                                                            {
+                                                                Seen =
+                                                                    DateTimeUtils.ToUnixTimestamp
+                                                                        currentSeenTimestamp
+                                                                Update =
+                                                                    updateMsg.Contents
+                                                            }
+                                                }
+                                            else
+                                                previouslySeenDirections,
+                                                updateDelta
+
 
                                         let lastSeenUpdate =
                                             updateDelta.LastUpdateBeforeSeen
@@ -603,12 +628,18 @@ type GossipSnapshotter
                                             deltaSet
                                             |> Map.add scId channelDelta
                                             |> readRow
+                                                previousShortChannelId
+                                                previouslySeenDirections
 
                                 else
                                     return deltaSet
                             }
 
-                        return! readRow deltaSet
+                        return!
+                            readRow
+                                (ShortChannelId.FromUInt64 UInt64.MaxValue)
+                                (false, false)
+                                deltaSet
                     else
                         return deltaSet
                 }
