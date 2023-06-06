@@ -1365,10 +1365,11 @@ type GossipSnapshotter
                                     "Snapshot creation took %f seconds to create it"
                                     stopWatch.Elapsed.TotalSeconds)
 
-                            let batchCommand = batch.CreateBatchCommand()
-
-                            batchCommand.CommandText <-
-                                "INSERT INTO snapshots(\"referenceDateTime\", \"blob\", \"dayRange\", \"lastSyncTimestamp\") VALUES ($1,$2,$3,$4)"
+                            let batchCommand =
+                                batch.CreateBatchCommand(
+                                    CommandText =
+                                        "INSERT INTO snapshots(\"referenceDateTime\", \"blob\", \"dayRange\", \"lastSyncTimestamp\") VALUES ($1,$2,$3,$4)"
+                                )
 
                             batchCommand.Parameters.Add(
                                 NpgsqlParameter(Value = referenceTimestamp)
