@@ -22,12 +22,12 @@ open DotNetRGS.Utils.FSharpUtil
 
 type MutatedProperties =
     {
-        mutable Flags: bool
-        mutable CltvExpiryDelta: bool
-        mutable HtlcMinimumMSat: bool
-        mutable FeeBaseMSat: bool
-        mutable FeeProportionalMillionths: bool
-        mutable HtlcMaximumMSat: bool
+        Flags: bool
+        CltvExpiryDelta: bool
+        HtlcMinimumMSat: bool
+        FeeBaseMSat: bool
+        FeeProportionalMillionths: bool
+        HtlcMaximumMSat: bool
     }
 
     static member Default =
@@ -42,24 +42,16 @@ type MutatedProperties =
 
     /// Does not include flags because the flag byte is always sent in full
     member self.Length() =
-        let mutable mutations = 0
+        let boolToInt =
+            function
+            | true -> 1
+            | false -> 0
 
-        if self.CltvExpiryDelta then
-            mutations <- mutations + 1
-
-        if self.HtlcMinimumMSat then
-            mutations <- mutations + 1
-
-        if self.FeeBaseMSat then
-            mutations <- mutations + 1
-
-        if self.FeeProportionalMillionths then
-            mutations <- mutations + 1
-
-        if self.HtlcMaximumMSat then
-            mutations <- mutations + 1
-
-        mutations
+        boolToInt self.CltvExpiryDelta
+        + boolToInt self.HtlcMinimumMSat
+        + boolToInt self.FeeBaseMSat
+        + boolToInt self.FeeProportionalMillionths
+        + boolToInt self.HtlcMaximumMSat
 
 type AnnouncementDelta =
     {
@@ -576,39 +568,36 @@ type GossipSnapshotter
                                         let lastSeenUpdate =
                                             updateDelta.LastUpdateBeforeSeen
 
-                                        if lastSeenUpdate.IsSome then
-                                            let lastSeenUpdate =
-                                                lastSeenUpdate.Value
+                                        let updateDelta =
+                                            if lastSeenUpdate.IsSome then
+                                                let lastSeenUpdate =
+                                                    lastSeenUpdate.Value
 
-                                            if updateMsg.Contents.ChannelFlags
-                                               <> lastSeenUpdate.ChannelFlags then
-                                                updateDelta.MutatedProperties.Flags <-
-                                                    true
-
-                                            if updateMsg.Contents.CLTVExpiryDelta
-                                               <> lastSeenUpdate.CLTVExpiryDelta then
-                                                updateDelta.MutatedProperties.CltvExpiryDelta <-
-                                                    true
-
-                                            if updateMsg.Contents.HTLCMinimumMSat
-                                               <> lastSeenUpdate.HTLCMinimumMSat then
-                                                updateDelta.MutatedProperties.HtlcMinimumMSat <-
-                                                    true
-
-                                            if updateMsg.Contents.FeeBaseMSat
-                                               <> lastSeenUpdate.FeeBaseMSat then
-                                                updateDelta.MutatedProperties.FeeBaseMSat <-
-                                                    true
-
-                                            if updateMsg.Contents.FeeProportionalMillionths
-                                               <> lastSeenUpdate.FeeProportionalMillionths then
-                                                updateDelta.MutatedProperties.FeeProportionalMillionths <-
-                                                    true
-
-                                            if updateMsg.Contents.HTLCMaximumMSat
-                                               <> lastSeenUpdate.HTLCMaximumMSat then
-                                                updateDelta.MutatedProperties.HtlcMaximumMSat <-
-                                                    true
+                                                { updateDelta with
+                                                    MutatedProperties =
+                                                        { MutatedProperties.Default with
+                                                            Flags =
+                                                                updateMsg.Contents.ChannelFlags
+                                                                <> lastSeenUpdate.ChannelFlags
+                                                            CltvExpiryDelta =
+                                                                updateMsg.Contents.CLTVExpiryDelta
+                                                                <> lastSeenUpdate.CLTVExpiryDelta
+                                                            HtlcMinimumMSat =
+                                                                updateMsg.Contents.HTLCMinimumMSat
+                                                                <> lastSeenUpdate.HTLCMinimumMSat
+                                                            FeeBaseMSat =
+                                                                updateMsg.Contents.FeeBaseMSat
+                                                                <> lastSeenUpdate.FeeBaseMSat
+                                                            FeeProportionalMillionths =
+                                                                updateMsg.Contents.FeeProportionalMillionths
+                                                                <> lastSeenUpdate.FeeProportionalMillionths
+                                                            HtlcMaximumMSat =
+                                                                updateMsg.Contents.HTLCMaximumMSat
+                                                                <> lastSeenUpdate.HTLCMaximumMSat
+                                                        }
+                                                }
+                                            else
+                                                updateDelta
 
                                         let channelDelta =
                                             if not direction then
