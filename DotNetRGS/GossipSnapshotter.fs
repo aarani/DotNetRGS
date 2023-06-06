@@ -67,9 +67,9 @@ type UpdateDelta =
 
 type DirectedUpdateDelta =
     {
-        mutable LastUpdateBeforeSeen: Option<UnsignedChannelUpdateMsg>
-        mutable MutatedProperties: MutatedProperties
-        mutable LastUpdateAfterSeen: Option<UpdateDelta>
+        LastUpdateBeforeSeen: Option<UnsignedChannelUpdateMsg>
+        MutatedProperties: MutatedProperties
+        LastUpdateAfterSeen: Option<UpdateDelta>
     }
 
     static member Default =
@@ -127,20 +127,20 @@ type UpdateSerialization =
 
 type SerializationSet =
     {
-        mutable Announcements: List<UnsignedChannelAnnouncementMsg>
-        mutable Updates: List<UpdateSerialization>
-        mutable FullUpdateDefaults: DefaultUpdateValues
-        mutable LatestSeen: uint32
-        mutable ChainHash: ChainHash
+        Announcements: List<UnsignedChannelAnnouncementMsg>
+        Updates: List<UpdateSerialization>
+        FullUpdateDefaults: DefaultUpdateValues
+        LatestSeen: uint32
+        ChainHash: ChainHash
     }
 
 type FullUpdateValueHistograms =
     {
-        mutable CLTVExpiryDelta: Histogram<BlockHeightOffset16>
-        mutable HTLCMinimumMSat: Histogram<LNMoney>
-        mutable FeeBaseMSat: Histogram<LNMoney>
-        mutable FeeProportionalMillionths: Histogram<uint32>
-        mutable HTLCMaximumMSat: Histogram<LNMoney>
+        CLTVExpiryDelta: Histogram<BlockHeightOffset16>
+        HTLCMinimumMSat: Histogram<LNMoney>
+        FeeBaseMSat: Histogram<LNMoney>
+        FeeProportionalMillionths: Histogram<uint32>
+        HTLCMaximumMSat: Histogram<LNMoney>
     }
 
     static member Default =
